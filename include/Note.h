@@ -1,18 +1,15 @@
-// Note.h
-#ifndef NOTE_H
-#define NOTE_H
+#pragma once
 
-#include "Effect.h"
-#include <vector>
-#include <cstdint>
+#include <string>
 
-struct Note {
-    int16_t pitch;                // MIDI note number or custom pitch value (e.g., 60 for C4)
-    uint8_t instrument;           // Instrument ID (0 if no instrument)
-    uint8_t volume;               // Volume (0-64, or other range)
-    std::vector<Effect> effects;  // List of effects applied to this note
+class Note {
+public:
+    Note(int pitch, float velocity) : pitch(pitch), velocity(velocity) {}
 
-    Note() : pitch(-1), instrument(0), volume(64) {}
+    int getPitch() const { return pitch; }
+    float getVelocity() const { return velocity; }
+
+private:
+    int pitch;
+    float velocity;
 };
-
-#endif // NOTE_H

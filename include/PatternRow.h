@@ -1,21 +1,13 @@
-// PatternRow.h
-#ifndef PATTERN_ROW_H
-#define PATTERN_ROW_H
+#pragma once
 
-#include "PatternStep.h"
 #include <vector>
+#include "PatternStep.h"
 
 class PatternRow {
 public:
-    std::vector<PatternStep> steps;
+    void addStep(PatternStep* step) { steps.push_back(step); }
+    const std::vector<PatternStep*>& getSteps() const { return steps; }
 
-    PatternRow(int numTracks) {
-        steps.resize(numTracks); // Initialize a row with a number of tracks
-    }
-
-    PatternStep& getStep(int index) {
-        return steps.at(index);
-    }
+private:
+    std::vector<PatternStep*> steps;
 };
-
-#endif // PATTERN_ROW_H

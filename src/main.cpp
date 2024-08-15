@@ -1,8 +1,7 @@
 #include <iostream>
 #include <fmt/core.h>
-#include <spdlog/spdlog.h>
-#include <boost/algorithm/string.hpp>
 #include <JuceHeader.h>
+#include "ReverbEffect.h"
 
 class SquareWaveSound : public juce::SynthesiserSound {
 public:
@@ -86,7 +85,7 @@ private:
 class MainComponent : public juce::AudioAppComponent {
 public:
     MainComponent() {
-        setSize(200, 200);
+        setSize(400, 300);
         synth.clearSounds();
         synth.clearVoices();
 
@@ -97,6 +96,21 @@ public:
 
         // Automatically start a middle C note
         synth.noteOn(1, 60, 0.8f);  // Channel 1, Note 60 (Middle C), Velocity 0.8
+
+        // Configure the slider
+        reverbSlider.setRange(0.0, 1.0, 0.01);
+        reverbSlider.setValue(0.3); // Default value matching initial reverb settings
+        reverbSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 100, 20);
+        reverbSlider.onValueChange = [this]() { 
+            reverbEffect.setParameter("wetLevel", reverbSlider.getValue()); 
+        };
+        addAndMakeVisible(reverbSlider);
+
+        reverbLabel.setText("Reverb Wet Level:", juce::dontSendNotification);
+        addAndMakeVisible(reverbLabel);
+
+        // Apply initial slider value to reverb effect
+        reverbEffect.setParameter("wetLevel", reverbSlider.getValue());
     }
 
     ~MainComponent() override {
@@ -104,7 +118,7 @@ public:
     }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
-        spdlog::info("prepareToPlay called with sampleRate: {}", sampleRate);
+        std::cout << "prepareToPlay called with sampleRate: " << sampleRate << std::endl;
         synth.setCurrentPlaybackSampleRate(sampleRate);
     }
 
@@ -112,6 +126,9 @@ public:
         bufferToFill.clearActiveBufferRegion();
         juce::MidiBuffer emptyBuffer;
         synth.renderNextBlock(*bufferToFill.buffer, emptyBuffer, 0, bufferToFill.numSamples);
+
+        // Apply the reverb effect to the buffer
+        reverbEffect.process(*bufferToFill.buffer, bufferToFill.numSamples);
     }
 
     void releaseResources() override {}
@@ -120,13 +137,22 @@ public:
         g.fillAll(juce::Colours::black);
         g.setColour(juce::Colours::white);
         g.setFont(20.0f);
-        g.drawText("Square Wave Test", getLocalBounds(), juce::Justification::centred, true);
+        g.drawText("Square Wave with Reverb", getLocalBounds(), juce::Justification::centred, true);
     }
 
-    void resized() override {}
+    void resized() override {
+        reverbLabel.setBounds(10, 10, getWidth() - 20, 20);
+        reverbSlider.setBounds(10, 40, getWidth() - 20, 20);
+    }
 
 private:
     juce::Synthesiser synth;
+    ReverbEffect reverbEffect; // Add the reverb effect as a member variable
+
+    juce::Slider reverbSlider; // Slider for controlling the reverb wet level
+    juce::Label reverbLabel;   // Label for the slider
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };
 
 class SquareWaveApp : public juce::JUCEApplication {

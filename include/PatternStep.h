@@ -1,17 +1,17 @@
-// PatternStep.h
-#ifndef PATTERN_STEP_H
-#define PATTERN_STEP_H
+#pragma once
 
 #include "Note.h"
-#include <vector>
+#include "Instrument.h"
 
 class PatternStep {
 public:
-    std::vector<Note> notes; // Multiple notes per step (polyphony)
+    PatternStep(Note* note, Instrument* instrument) 
+        : note(note), instrument(instrument) {}
 
-    void addNote(const Note& note) {
-        notes.push_back(note);
-    }
+    Note* getNote() const { return note; }
+    Instrument* getInstrument() const { return instrument; }
+
+private:
+    Note* note;
+    Instrument* instrument;
 };
-
-#endif // PATTERN_STEP_H

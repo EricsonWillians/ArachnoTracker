@@ -1,26 +1,13 @@
-// Pattern.h
-#ifndef PATTERN_H
-#define PATTERN_H
+#pragma once
 
-#include "PatternRow.h"
 #include <vector>
+#include "PatternRow.h"
 
 class Pattern {
 public:
-    Pattern(int numRows, int numTracks) {
-        rows.resize(numRows, PatternRow(numTracks)); // Initialize pattern with rows
-    }
-
-    PatternRow& getRow(int index) {
-        return rows.at(index); // Get a specific row by index
-    }
-
-    int getNumRows() const {
-        return rows.size(); // Get the number of rows in the pattern
-    }
+    void addRow(PatternRow* row) { rows.push_back(row); }
+    const std::vector<PatternRow*>& getRows() const { return rows; }
 
 private:
-    std::vector<PatternRow> rows; // Collection of pattern rows
+    std::vector<PatternRow*> rows;
 };
-
-#endif // PATTERN_H

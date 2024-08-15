@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
+# Set compilers
 set(CMAKE_C_COMPILER /usr/bin/gcc-10)
 set(CMAKE_CXX_COMPILER /usr/bin/g++-10)
 
@@ -12,36 +13,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 # Add JUCE
 add_subdirectory(juce)
 
-# Add the JUCE include directory
+# Include JUCE directories
 include_directories(${CMAKE_SOURCE_DIR}/juce)
 include_directories(${CMAKE_SOURCE_DIR}/src)
 
-# Add the GTK include path
+# Include GTK and other necessary paths
 include_directories(/usr/include/gtk-3.0)
-
-# Add the glib include path
 include_directories(/usr/include/glib-2.0)
 include_directories(/usr/lib/x86_64-linux-gnu/glib-2.0/include/)
-
-# Add the pango include path
 include_directories(/usr/include/pango-1.0)
-
-# Add the harfbuzz include path
-include_directories(/usr/include/harfbuzz) # Because of this guy it's needed to use G++ 10
-
-# Add the cairo include path
+include_directories(/usr/include/harfbuzz) 
 include_directories(/usr/include/cairo)
-
-# Add the gdk-pixbuf include path
 include_directories(/usr/include/gdk-pixbuf-2.0)
-
-# Add the webkitgtk-4.0 include path
 include_directories(/usr/include/webkitgtk-4.0)
-
-# Add the atk include path
 include_directories(/usr/include/atk-1.0)
-
-# Add the libsoup-2.4 include path
 include_directories(/usr/include/libsoup-2.4)
 
 # Find and include pybind11
@@ -51,6 +36,10 @@ include_directories(${pybind11_INCLUDE_DIRS})
 # Find and include SDL2
 find_package(SDL2 REQUIRED)
 include_directories(${SDL2_INCLUDE_DIRS})
+
+# Find and include Boost
+find_package(Boost REQUIRED COMPONENTS system filesystem log log_setup)
+include_directories(${Boost_INCLUDE_DIRS})
 
 # Include directories for other dependencies
 include_directories(
@@ -93,8 +82,10 @@ add_executable(ArachnoTracker
 target_link_libraries(ArachnoTracker
     fmt                       # fmt library
     spdlog                    # spdlog library
-    boost_system              # Boost system library
-    boost_filesystem          # Boost filesystem library
+    Boost::system             # Boost system library
+    Boost::filesystem         # Boost filesystem library
+    Boost::log                # Boost log library
+    Boost::log_setup          # Boost log setup library
     pybind11::module          # pybind11 module
     ${SDL2_LIBRARIES}         # SDL2 libraries
     juce::juce_audio_utils    # JUCE audio utilities module
