@@ -1,32 +1,94 @@
-# Prerequisites
-*.d
+# Ignore the build directory
+/build/
 
-# Compiled Object files
-*.slo
-*.lo
+# Ignore the JUCE framework folder
+/juce/
+
+# Ignore CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Ignore compiled object files, static and shared libs
 *.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
+*.a
 *.so
 *.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
 *.lib
-
-# Executables
+*.dll
 *.exe
-*.out
-*.app
+
+# Ignore backup files
+*~
+*.bak
+*.swp
+*.swo
+
+# Ignore temporary files
+/tmp/
+*.tmp
+*.log
+*.pid
+*.seed
+*.pyc
+*.pyo
+*.pyd
+*.class
+
+# Ignore Visual Studio Code workspace settings and extensions
+.vscode/
+.code-workspace
+
+# Ignore macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+._*
+.DocumentRevisions-V100
+.FBCIndex
+.TemporaryItems
+.apdisk
+
+# Ignore Linux system files
+*~
+.nfs*
+
+# Ignore Python virtual environments
+venv/
+__pycache__/
+
+# Ignore Windows system files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Ignore JetBrains IDEs project files
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Ignore Qt Creator project files
+*.pro.user
+*.qbs.user
+*.pro.user.*
+
+# Ignore IntelliJ IDEA project files
+*.ipr
+*.iws
+.idea/
+*.iml
+
+# Ignore CLion files
+.cmake/
+.idea/
+build/
+cmake-build-*/
+
+# Ignore Eclipse project files
+.project
+.cproject
+.settings/
