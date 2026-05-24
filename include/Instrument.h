@@ -47,5 +47,6 @@ struct Instrument {
 
 const char* waveformName(Waveform waveform);
 Waveform waveformFromName(const std::string& name);
+bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, double value);
 
 } // namespace arachno

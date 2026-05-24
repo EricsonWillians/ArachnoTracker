@@ -13,6 +13,8 @@ The current codebase is a headless foundation for the engine. It renders a demo 
 - Command-based pattern editing suitable for terminal workflows and future TUI/GUI integration.
 - Native 16-bit stereo WAV export.
 - MP3 and OGG export when `ffmpeg` or `avconv` is installed.
+- Per-track stem export for downstream mixing and arrangement workflows.
+- Standard MIDI file export for DAWs, hardware sequencers, and external Linux synth chains.
 - CTest smoke tests for tracker timing, audio rendering, and WAV export.
 
 ## Building
@@ -58,7 +60,10 @@ Inspect and render a saved project:
 
 ```bash
 ./build/ArachnoTracker --project-info demo.arachno
+./build/ArachnoTracker --show demo.arachno 0 0 32
 ./build/ArachnoTracker --render demo.arachno demo.wav
+./build/ArachnoTracker --render-stems demo.arachno stems wav
+./build/ArachnoTracker --export-midi demo.arachno demo.mid
 ```
 
 The project format is line-oriented, versioned, and diff-friendly. It stores title, tempo, sample rate, tracks, instruments, synth patch parameters, patterns, steps, order list, gates, velocities, microtiming, and automation values.
@@ -73,6 +78,12 @@ Apply tracker edits without opening a GUI:
   "inst 1" \
   "note D5 0.8" \
   "gate 1.25"
+```
+
+Apply repeatable edits from a command file:
+
+```bash
+./build/ArachnoTracker --edit-file demo.arachno generated.arachno commands.arachno-edit
 ```
 
 Start a line-oriented terminal editing session:
@@ -91,8 +102,26 @@ Supported editor commands:
 - `gate ROWS`
 - `transpose SEMITONES`
 - `transpose SEMITONES track`
+- `fill-scale TRACK START COUNT STRIDE ROOT SCALE INST [VELOCITY] [GATE]`
+- `euclid TRACK START STEPS PULSES ROOT INST [VELOCITY] [GATE]`
+- `param NAME VALUE`
+- `param-clear [NAME|*]`
+- `view` in interactive mode
 - `clear` or `rest`
 - `write` and `quit` in interactive mode
+
+Examples:
+
+```bash
+./build/ArachnoTracker --edit demo.arachno generated.arachno \
+  "fill-scale 1 0 12 4 C4 minor 1 0.75 0.8" \
+  "euclid 0 0 16 5 C2 0 0.9 0.5" \
+  "move 0 1" \
+  "param cutoff 0.95" \
+  "param vibrato 6"
+```
+
+Supported synth automation names include `mix`, `detune`, `sub`, `noise`, `cutoff`, `resonance`, `filter_env`, `lfo_rate`, `vibrato`, `tremolo`, `drive`, `gain`, `pan`, `attack`, `decay`, `sustain`, `release`, and filter envelope fields such as `filter_attack`.
 
 Run tests:
 

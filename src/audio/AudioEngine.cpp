@@ -22,6 +22,29 @@ struct ScheduledNote {
 float softLimit(float value) {
     return std::tanh(value);
 }
+
+bool songHasSoloTrack(const Song& song) {
+    return std::any_of(song.tracks.begin(), song.tracks.end(), [](const Track& track) {
+        return track.solo;
+    });
+}
+
+bool shouldRenderTrack(const Song& song, int track, const RenderOptions& options, bool hasSoloTrack) {
+    if (track < 0 || track >= static_cast<int>(song.tracks.size())) {
+        return false;
+    }
+
+    if (options.soloTrack >= 0) {
+        return track == options.soloTrack;
+    }
+
+    const Track& trackInfo = song.tracks[static_cast<std::size_t>(track)];
+    if (!options.includeMutedTracks && trackInfo.muted) {
+        return false;
+    }
+
+    return !hasSoloTrack || trackInfo.solo;
+}
 } // namespace
 
 AudioEngine::AudioEngine(int sampleRate) : sampleRate_(sampleRate) {
@@ -31,6 +54,10 @@ AudioEngine::AudioEngine(int sampleRate) : sampleRate_(sampleRate) {
 }
 
 RenderedAudio AudioEngine::renderSong(const Song& song) const {
+    return renderSong(song, RenderOptions {});
+}
+
+RenderedAudio AudioEngine::renderSong(const Song& song, const RenderOptions& options) const {
     const int sampleRate = song.sampleRate > 0 ? song.sampleRate : sampleRate_;
     const double secondsPerRow = song.secondsPerRow();
     const int tailFrames = static_cast<int>(sampleRate * 1.2);
@@ -42,6 +69,7 @@ RenderedAudio AudioEngine::renderSong(const Song& song) const {
 
     std::vector<ScheduledNote> events;
     int globalRow = 0;
+    const bool hasSoloTrack = songHasSoloTrack(song);
 
     for (int patternIndex : song.order) {
         if (patternIndex < 0 || patternIndex >= static_cast<int>(song.patterns.size())) {
@@ -51,6 +79,10 @@ RenderedAudio AudioEngine::renderSong(const Song& song) const {
         const Pattern& pattern = song.patterns[static_cast<std::size_t>(patternIndex)];
         for (int row = 0; row < pattern.rowCount(); ++row) {
             for (int track = 0; track < pattern.trackCount(); ++track) {
+                if (!shouldRenderTrack(song, track, options, hasSoloTrack)) {
+                    continue;
+                }
+
                 const PatternStep& step = pattern.step(row, track);
                 if (!step.note.has_value()) {
                     continue;
@@ -67,11 +99,10 @@ RenderedAudio AudioEngine::renderSong(const Song& song) const {
                     ? &song.tracks[static_cast<std::size_t>(track)]
                     : nullptr;
 
-                if (trackInfo != nullptr && trackInfo->muted) {
-                    continue;
-                }
-
                 SynthPatch patch = song.instruments[static_cast<std::size_t>(instrumentIndex)].patch;
+                for (const auto& [parameter, value] : step.automation) {
+                    setSynthPatchParameter(patch, parameter, value);
+                }
                 if (trackInfo != nullptr) {
                     patch.gain *= trackInfo->volume;
                 }
@@ -133,6 +164,17 @@ RenderedAudio AudioEngine::renderSong(const Song& song) const {
     }
 
     return rendered;
+}
+
+RenderedAudio AudioEngine::renderTrackStem(const Song& song, int trackIndex) const {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(song.tracks.size())) {
+        throw std::out_of_range("track index is out of range");
+    }
+
+    RenderOptions options;
+    options.soloTrack = trackIndex;
+    options.includeMutedTracks = true;
+    return renderSong(song, options);
 }
 
 } // namespace arachno

@@ -10,13 +10,16 @@ add_library(arachno_core
     src/audio/AudioEngine.cpp
     src/audio/Mixer.cpp
     src/audio/Synthesizer.cpp
+    src/core/Instrument.cpp
     src/core/Note.cpp
     src/core/Pattern.cpp
     src/core/PatternRow.cpp
     src/core/PatternStep.cpp
     src/core/Tracker.cpp
     src/ui/PatternEditor.cpp
+    src/ui/PatternView.cpp
     src/utils/FileIO.cpp
+    src/utils/MidiExporter.cpp
     src/utils/ProjectIO.cpp
 )
 
