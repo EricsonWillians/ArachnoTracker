@@ -1,13 +1,15 @@
 #pragma once
 
 #include <vector>
+
 #include "PatternStep.h"
 
-class PatternRow {
-public:
-    void addStep(PatternStep* step) { steps.push_back(step); }
-    const std::vector<PatternStep*>& getSteps() const { return steps; }
+namespace arachno {
 
-private:
-    std::vector<PatternStep*> steps;
+struct PatternRow {
+    std::vector<PatternStep> steps;
+
+    explicit PatternRow(int trackCount = 0) : steps(static_cast<std::size_t>(trackCount)) {}
 };
+
+} // namespace arachno

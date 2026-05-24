@@ -2,14 +2,21 @@
 
 #include <string>
 
-class Note {
-public:
-    Note(int pitch, float velocity) : pitch(pitch), velocity(velocity) {}
+namespace arachno {
 
-    int getPitch() const { return pitch; }
-    float getVelocity() const { return velocity; }
+struct Note {
+    int midi = 60;
+    float velocity = 1.0f;
 
-private:
-    int pitch;
-    float velocity;
+    Note() = default;
+    Note(int midiNote, float noteVelocity) : midi(midiNote), velocity(noteVelocity) {}
+
+    double frequency() const;
+    std::string name() const;
 };
+
+double midiNoteToFrequency(int midiNote);
+std::string midiNoteName(int midiNote);
+int noteNameToMidi(const std::string& noteName);
+
+} // namespace arachno

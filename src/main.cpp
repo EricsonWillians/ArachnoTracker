@@ -1,192 +1,163 @@
+#include <exception>
 #include <iostream>
-#include <fmt/core.h>
-#include <JuceHeader.h>
-#include "ReverbEffect.h"
+#include <sstream>
+#include <string>
 
-class SquareWaveSound : public juce::SynthesiserSound {
-public:
-    bool appliesToNote(int /*midiNoteNumber*/) override { return true; }
-    bool appliesToChannel(int /*midiChannel*/) override { return true; }
-};
+#include "AudioEngine.h"
+#include "Exporter.h"
+#include "PatternEditor.h"
+#include "ProjectIO.h"
+#include "Tracker.h"
 
-class SquareWaveVoice : public juce::SynthesiserVoice {
-public:
-    SquareWaveVoice() : currentAngle(0), angleDelta(0), level(0.5), tailOff(0) {}
+namespace {
 
-    bool canPlaySound(juce::SynthesiserSound* sound) override {
-        return dynamic_cast<SquareWaveSound*>(sound) != nullptr;
-    }
+void printUsage() {
+    std::cout
+        << "ArachnoTracker\n"
+        << "Usage:\n"
+        << "  ArachnoTracker --demo <output.wav|output.mp3|output.ogg>\n"
+        << "  ArachnoTracker --write-demo <project.arachno>\n"
+        << "  ArachnoTracker --render <project.arachno> <output.wav|output.mp3|output.ogg>\n"
+        << "  ArachnoTracker --project-info <project.arachno>\n"
+        << "  ArachnoTracker --edit <input.arachno> <output.arachno> <command>...\n"
+        << "  ArachnoTracker --interactive <input.arachno> <output.arachno>\n"
+        << "  ArachnoTracker --info\n\n"
+        << "Editor commands: pattern N, move ROW TRACK, up/down/left/right [N], note C4 [VEL], inst N, gate ROWS, transpose N [track], clear, write, quit\n"
+        << "Native WAV export is built in. MP3 and OGG export use ffmpeg or avconv when available.\n";
+}
 
-    void startNote(int midiNoteNumber, float velocity, juce::SynthesiserSound*, int /*currentPitchWheelPosition*/) override {
-        currentAngle = 0.0;
-        level = velocity;
-        tailOff = 0.0;
+void printSongInfo(const arachno::Song& song) {
+    std::cout
+        << "Title: " << song.title << "\n"
+        << "Tracks: " << song.tracks.size() << "\n"
+        << "Instruments: " << song.instruments.size() << "\n"
+        << "Patterns: " << song.patterns.size() << "\n"
+        << "Order entries: " << song.order.size() << "\n"
+        << "Duration: " << song.durationSeconds() << " seconds\n";
+}
 
-        double cyclesPerSecond = juce::MidiMessage::getMidiNoteInHertz(midiNoteNumber);
-        double cyclesPerSample = cyclesPerSecond / getSampleRate();
+void renderSongToPath(const arachno::Song& song, const std::string& outputPath) {
+    arachno::AudioEngine engine(song.sampleRate);
+    arachno::RenderedAudio audio = engine.renderSong(song);
+    arachno::exportAudio(audio, outputPath, arachno::exportFormatFromPath(outputPath));
 
-        angleDelta = cyclesPerSample * 2.0 * juce::MathConstants<double>::pi;
-    }
+    std::cout
+        << "Exported " << outputPath << " at " << audio.sampleRate
+        << " Hz, " << audio.frameCount() << " stereo frames\n";
+}
 
-    void stopNote(float /*velocity*/, bool allowTailOff) override {
-        if (allowTailOff) {
-            if (tailOff == 0.0) {
-                tailOff = 1.0;
+} // namespace
+
+int main(int argc, char** argv) {
+    try {
+        if (argc == 1 || std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h") {
+            printUsage();
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--info") {
+            const arachno::Song song = arachno::makeDemoSong();
+            printSongInfo(song);
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--demo") {
+            if (argc < 3) {
+                std::cerr << "--demo requires an output path\n";
+                return 2;
             }
-        } else {
-            clearCurrentNote();
-            angleDelta = 0.0;
+
+            const std::string outputPath = argv[2];
+            arachno::Song song = arachno::makeDemoSong();
+            renderSongToPath(song, outputPath);
+            return 0;
         }
-    }
 
-    void pitchWheelMoved(int) override {}
-    void controllerMoved(int, int) override {}
-
-    void renderNextBlock(juce::AudioBuffer<float>& outputBuffer, int startSample, int numSamples) override {
-        if (angleDelta != 0.0) {
-            if (tailOff > 0.0) {
-                while (--numSamples >= 0) {
-                    float currentSample = (float)(std::sin(currentAngle) > 0.0 ? level : -level);
-
-                    for (int i = outputBuffer.getNumChannels(); --i >= 0;) {
-                        outputBuffer.addSample(i, startSample, currentSample);
-                    }
-
-                    currentAngle += angleDelta;
-                    ++startSample;
-
-                    tailOff *= 0.99;
-
-                    if (tailOff <= 0.005) {
-                        clearCurrentNote();
-                        angleDelta = 0.0;
-                        break;
-                    }
-                }
-            } else {
-                while (--numSamples >= 0) {
-                    float currentSample = (float)(std::sin(currentAngle) > 0.0 ? level : -level);
-
-                    for (int i = outputBuffer.getNumChannels(); --i >= 0;) {
-                        outputBuffer.addSample(i, startSample, currentSample);
-                    }
-
-                    currentAngle += angleDelta;
-                    ++startSample;
-                }
+        if (std::string(argv[1]) == "--write-demo") {
+            if (argc < 3) {
+                std::cerr << "--write-demo requires a project path\n";
+                return 2;
             }
-        }
-    }
 
-private:
-    double currentAngle, angleDelta, level, tailOff;
-};
-
-class MainComponent : public juce::AudioAppComponent {
-public:
-    MainComponent() {
-        setSize(400, 300);
-        synth.clearSounds();
-        synth.clearVoices();
-
-        synth.addSound(new SquareWaveSound());
-        synth.addVoice(new SquareWaveVoice());
-
-        setAudioChannels(0, 2); // No inputs, 2 outputs
-
-        // Automatically start a middle C note
-        synth.noteOn(1, 60, 0.8f);  // Channel 1, Note 60 (Middle C), Velocity 0.8
-
-        // Configure the slider
-        reverbSlider.setRange(0.0, 1.0, 0.01);
-        reverbSlider.setValue(0.3); // Default value matching initial reverb settings
-        reverbSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 100, 20);
-        reverbSlider.onValueChange = [this]() { 
-            reverbEffect.setParameter("wetLevel", reverbSlider.getValue()); 
-        };
-        addAndMakeVisible(reverbSlider);
-
-        reverbLabel.setText("Reverb Wet Level:", juce::dontSendNotification);
-        addAndMakeVisible(reverbLabel);
-
-        // Apply initial slider value to reverb effect
-        reverbEffect.setParameter("wetLevel", reverbSlider.getValue());
-    }
-
-    ~MainComponent() override {
-        shutdownAudio();
-    }
-
-    void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override {
-        std::cout << "prepareToPlay called with sampleRate: " << sampleRate << std::endl;
-        synth.setCurrentPlaybackSampleRate(sampleRate);
-    }
-
-    void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override {
-        bufferToFill.clearActiveBufferRegion();
-        juce::MidiBuffer emptyBuffer;
-        synth.renderNextBlock(*bufferToFill.buffer, emptyBuffer, 0, bufferToFill.numSamples);
-
-        // Apply the reverb effect to the buffer
-        reverbEffect.process(*bufferToFill.buffer, bufferToFill.numSamples);
-    }
-
-    void releaseResources() override {}
-
-    void paint(juce::Graphics& g) override {
-        g.fillAll(juce::Colours::black);
-        g.setColour(juce::Colours::white);
-        g.setFont(20.0f);
-        g.drawText("Square Wave with Reverb", getLocalBounds(), juce::Justification::centred, true);
-    }
-
-    void resized() override {
-        reverbLabel.setBounds(10, 10, getWidth() - 20, 20);
-        reverbSlider.setBounds(10, 40, getWidth() - 20, 20);
-    }
-
-private:
-    juce::Synthesiser synth;
-    ReverbEffect reverbEffect; // Add the reverb effect as a member variable
-
-    juce::Slider reverbSlider; // Slider for controlling the reverb wet level
-    juce::Label reverbLabel;   // Label for the slider
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
-};
-
-class SquareWaveApp : public juce::JUCEApplication {
-public:
-    const juce::String getApplicationName() override { return "Square Wave Test"; }
-    const juce::String getApplicationVersion() override { return "1.0"; }
-
-    void initialise(const juce::String&) override {
-        mainWindow.reset(new MainWindow(getApplicationName()));
-    }
-
-    void shutdown() override {
-        mainWindow = nullptr;
-    }
-
-    class MainWindow : public juce::DocumentWindow {
-    public:
-        MainWindow(juce::String name) : juce::DocumentWindow(name, juce::Colours::black, juce::DocumentWindow::allButtons) {
-            setUsingNativeTitleBar(true);
-            setContentOwned(new MainComponent(), true);
-            setResizable(true, true);
-            centreWithSize(getWidth(), getHeight());
-            setVisible(true);
+            arachno::saveProject(arachno::makeDemoSong(), argv[2]);
+            std::cout << "Wrote " << argv[2] << "\n";
+            return 0;
         }
 
-        void closeButtonPressed() override {
-            juce::JUCEApplication::getInstance()->systemRequestedQuit();
+        if (std::string(argv[1]) == "--render") {
+            if (argc < 4) {
+                std::cerr << "--render requires a project path and an output path\n";
+                return 2;
+            }
+
+            const arachno::Song song = arachno::loadProject(argv[2]);
+            renderSongToPath(song, argv[3]);
+            return 0;
         }
-    private:
-        std::unique_ptr<MainComponent> mainComponent;
-    };
 
-private:
-    std::unique_ptr<MainWindow> mainWindow;
-};
+        if (std::string(argv[1]) == "--project-info") {
+            if (argc < 3) {
+                std::cerr << "--project-info requires a project path\n";
+                return 2;
+            }
 
-START_JUCE_APPLICATION(SquareWaveApp)
+            printSongInfo(arachno::loadProject(argv[2]));
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--edit") {
+            if (argc < 5) {
+                std::cerr << "--edit requires input path, output path, and at least one command\n";
+                return 2;
+            }
+
+            arachno::Song song = arachno::loadProject(argv[2]);
+            arachno::PatternEditorSession editor(song);
+            for (int i = 4; i < argc; ++i) {
+                std::cout << editor.applyCommand(argv[i]) << "\n";
+            }
+            arachno::saveProject(song, argv[3]);
+            std::cout << "Wrote " << argv[3] << "\n";
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--interactive") {
+            if (argc < 4) {
+                std::cerr << "--interactive requires input path and output path\n";
+                return 2;
+            }
+
+            arachno::Song song = arachno::loadProject(argv[2]);
+            arachno::PatternEditorSession editor(song);
+            std::cout << "Interactive editor. Type commands, write, or quit.\n";
+            std::string line;
+            while (true) {
+                const arachno::EditorCursor& cursor = editor.cursor();
+                std::cout
+                    << "arachno p" << cursor.pattern
+                    << " r" << cursor.row
+                    << " t" << cursor.track
+                    << "> ";
+                if (!std::getline(std::cin, line)) {
+                    break;
+                }
+                if (line == "quit" || line == "q") {
+                    break;
+                }
+                if (line == "write" || line == "w") {
+                    arachno::saveProject(song, argv[3]);
+                    std::cout << "Wrote " << argv[3] << "\n";
+                    continue;
+                }
+                std::cout << editor.applyCommand(line) << "\n";
+            }
+            return 0;
+        }
+
+        printUsage();
+        return 2;
+    } catch (const std::exception& error) {
+        std::cerr << "ArachnoTracker error: " << error.what() << "\n";
+        return 1;
+    }
+}

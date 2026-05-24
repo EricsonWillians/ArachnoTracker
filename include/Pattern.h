@@ -1,13 +1,33 @@
 #pragma once
 
+#include <stdexcept>
+#include <string>
 #include <vector>
+
 #include "PatternRow.h"
+
+namespace arachno {
 
 class Pattern {
 public:
-    void addRow(PatternRow* row) { rows.push_back(row); }
-    const std::vector<PatternRow*>& getRows() const { return rows; }
+    Pattern(std::string name = "Pattern", int rows = 64, int tracks = 8);
+
+    const std::string& name() const { return name_; }
+    int rowCount() const { return static_cast<int>(rows_.size()); }
+    int trackCount() const { return trackCount_; }
+
+    PatternStep& step(int row, int track);
+    const PatternStep& step(int row, int track) const;
+
+    std::vector<PatternRow>& rows() { return rows_; }
+    const std::vector<PatternRow>& rows() const { return rows_; }
 
 private:
-    std::vector<PatternRow*> rows;
+    void checkBounds(int row, int track) const;
+
+    std::string name_;
+    int trackCount_ = 0;
+    std::vector<PatternRow> rows_;
 };
+
+} // namespace arachno

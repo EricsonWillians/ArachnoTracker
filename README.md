@@ -1,134 +1,112 @@
 # ArachnoTracker
 
-ArachnoTracker is a modern music tracker inspired by classic software like FastTracker II and MilkyTracker. It features polyphony, multi-effect processing, and Python scripting capabilities, offering a powerful tool for musicians and audio enthusiasts.
+ArachnoTracker is becoming a Linux-first compositional tracker: pattern-based sequencing, a built-in synthesizer, and offline export for finished audio.
 
-## Features
+The current codebase is a headless foundation for the engine. It renders a demo song from tracker patterns into stereo audio and exports WAV natively, with MP3 and OGG export through common Linux encoders.
 
-- **Polyphony Support:** Play multiple notes simultaneously within a single track.
-- **Multi-Effect Processing:** Apply multiple effects to each note.
-- **Python Scripting:** Use Python to script patterns and create complex compositions.
-- **Cross-Platform Compatibility:** Designed to run on Linux, Windows, and macOS.
+## What Works Now
 
-## Prerequisites
+- Value-based song model with tracks, instruments, patterns, rows, steps, note gates, microtiming, velocity, gain, and pan.
+- Built-in polyphonic synthesizer with sine, square, saw, triangle, noise, dual oscillator mix, detune, sub oscillator, noise, low-pass shaping, filter envelope, LFO vibrato/tremolo, drive, ADSR envelope, and per-patch pan/gain.
+- Offline renderer that schedules pattern events into sample buffers.
+- Versioned `.arachno` project save/load.
+- Command-based pattern editing suitable for terminal workflows and future TUI/GUI integration.
+- Native 16-bit stereo WAV export.
+- MP3 and OGG export when `ffmpeg` or `avconv` is installed.
+- CTest smoke tests for tracker timing, audio rendering, and WAV export.
 
-Before building ArachnoTracker, ensure you have the following dependencies installed on your system:
-
-### Required Packages
-
-- **CMake** (version 3.15 or higher)
-- **GNU Compiler Collection (GCC)** (version 10 or higher)
-- **JUCE Framework**
-- **GLib**
-- **GTK+ 3**
-- **Pango**
-- **Harfbuzz**
-- **Cairo**
-- **GDK-Pixbuf**
-- **WebKitGTK**
-- **ATK**
-- **Libsoup**
-- **libcurl**
-- **pybind11**
-- **SDL2**
-
-### Installing Dependencies on Ubuntu
-
-To install the required dependencies on Ubuntu, run the following commands:
+## Building
 
 ```bash
-sudo apt-get update
-
-# Install CMake and GCC
-sudo apt-get install cmake gcc-10 g++-10
-
-# Install JUCE dependencies
-sudo apt-get install libasound2-dev libfreetype6-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libcurl4-openssl-dev
-
-# Install GLib, GTK, Pango, Harfbuzz, Cairo, GDK-Pixbuf, WebKitGTK, ATK, and Libsoup
-sudo apt-get install libglib2.0-dev libgtk-3-dev libpango1.0-dev libharfbuzz-dev libcairo2-dev libgdk-pixbuf2.0-dev libwebkit2gtk-4.0-dev libatk1.0-dev libsoup2.4-dev
-
-# Install pybind11
-sudo apt-get install pybind11-dev
-
-# Install SDL2
-sudo apt-get install libsdl2-dev
+cmake -S . -B build
+cmake --build build
 ```
 
-### Installing JUCE
+The current engine has no mandatory third-party dependency beyond a C++17 compiler and CMake.
 
-Download and extract the JUCE framework:
+## Exporting Audio
+
+Render the built-in demo song:
 
 ```bash
-cd /path/to/your/workspace
-wget https://github.com/juce-framework/JUCE/archive/refs/tags/8.0.1.zip -O juce.zip
-unzip juce.zip
-mv JUCE-8.0.1 juce
+./build/ArachnoTracker --demo demo.wav
+./build/ArachnoTracker --demo demo.mp3
+./build/ArachnoTracker --demo demo.ogg
 ```
 
-## Building ArachnoTracker
-
-### Step 1: Clone the Repository
-
-If you haven't already, clone the ArachnoTracker repository to your local machine:
+WAV export is built into ArachnoTracker. MP3 and OGG export use `ffmpeg` first, then `avconv` as a fallback:
 
 ```bash
-git clone https://github.com/yourusername/ArachnoTracker.git
-cd ArachnoTracker
+sudo apt-get install ffmpeg
 ```
 
-### Step 2: Configure the Build
-
-Create a build directory and configure the project using CMake:
+Inspect the demo project:
 
 ```bash
-mkdir build
-cd build
-cmake -DCMAKE_C_COMPILER=/usr/bin/gcc-10 -DCMAKE_CXX_COMPILER=/usr/bin/g++-10 ..
+./build/ArachnoTracker --info
 ```
 
-### Step 3: Build the Project
+## Project Files
 
-Compile the project using `make`:
+Create a reusable project file:
 
 ```bash
-make
+./build/ArachnoTracker --write-demo demo.arachno
 ```
 
-If the build is successful, the executable `ArachnoTracker` will be created in the `build` directory.
-
-## Running ArachnoTracker
-
-Once the build is complete, you can run ArachnoTracker directly from the terminal:
+Inspect and render a saved project:
 
 ```bash
-./ArachnoTracker
+./build/ArachnoTracker --project-info demo.arachno
+./build/ArachnoTracker --render demo.arachno demo.wav
 ```
 
-A window should open, and you should hear a continuous square wave sound, verifying that the audio setup is functioning correctly.
+The project format is line-oriented, versioned, and diff-friendly. It stores title, tempo, sample rate, tracks, instruments, synth patch parameters, patterns, steps, order list, gates, velocities, microtiming, and automation values.
 
-## Troubleshooting
+## Command Editing
 
-### Common Issues
-
-- **No Sound:** Ensure that your audio output device is functioning correctly and that JUCE's audio settings are configured properly.
-- **Missing Dependencies:** If you encounter errors related to missing libraries, ensure that all required packages are installed as per the instructions above.
-
-### Additional Debugging
-
-If you encounter any issues during the build process, consider running the following commands to clean the build directory and reconfigure the project:
+Apply tracker edits without opening a GUI:
 
 ```bash
-rm -rf build
-mkdir build
-cd build
-cmake -DCMAKE_C_COMPILER=/usr/bin/gcc-10 -DCMAKE_CXX_COMPILER=/usr/bin/g++-10 ..
-make
+./build/ArachnoTracker --edit demo.arachno edited.arachno \
+  "move 4 1" \
+  "inst 1" \
+  "note D5 0.8" \
+  "gate 1.25"
 ```
 
-## Contributing
+Start a line-oriented terminal editing session:
 
-Contributions are welcome! If you'd like to contribute to ArachnoTracker, please fork the repository, create a new branch, and submit a pull request.
+```bash
+./build/ArachnoTracker --interactive demo.arachno edited.arachno
+```
 
-## License
+Supported editor commands:
 
-ArachnoTracker is licensed under the [AGPLv3 License](https://www.gnu.org/licenses/agpl-3.0.html). Please see the `LICENSE.md` file for more details.
+- `pattern N`
+- `move ROW TRACK`
+- `up [N]`, `down [N]`, `left [N]`, `right [N]`
+- `note C4 [VELOCITY]`
+- `inst N`
+- `gate ROWS`
+- `transpose SEMITONES`
+- `transpose SEMITONES track`
+- `clear` or `rest`
+- `write` and `quit` in interactive mode
+
+Run tests:
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+## Next Big Pieces
+
+To become a truly powerful compositional tool, the next layers should be:
+
+- A full-screen keyboard-first tracker TUI/GUI on top of the editor session.
+- Scripting bindings for generating and transforming patterns.
+- MIDI input/output and controller mapping.
+- JACK/PipeWire integration for Linux studio workflows.
+- Plugin hosting, especially LV2 and CLAP.
+- More synthesis: modulation matrix, filter envelopes, LFOs, wavetable import, sampler zones, and macros.
