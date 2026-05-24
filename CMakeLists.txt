@@ -20,6 +20,8 @@ add_library(arachno_core
     src/ui/PatternView.cpp
     src/utils/FileIO.cpp
     src/utils/MidiExporter.cpp
+    src/utils/PatchIO.cpp
+    src/utils/ProjectDiagnostics.cpp
     src/utils/ProjectIO.cpp
 )
 

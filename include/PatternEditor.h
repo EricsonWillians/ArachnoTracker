@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "Tracker.h"
 
@@ -30,6 +31,27 @@ public:
     void clearAllAutomation();
     void transposeCurrent(int semitones);
     void transposeTrack(int track, int semitones);
+    void setTempo(double bpm);
+    void setRowsPerBeat(int rowsPerBeat);
+    void renameActivePattern(const std::string& name);
+    int createPattern(const std::string& name, int rows, int tracks = -1);
+    int cloneActivePattern(const std::string& name);
+    void appendOrder(int pattern = -1);
+    void setOrder(const std::vector<int>& order);
+    int createTrack(const std::string& name);
+    int duplicateTrack(int sourceTrack, const std::string& name);
+    void renameTrack(int track, const std::string& name);
+    void clearTrack(int track);
+    void resizeActivePattern(int rows);
+    void setTrackVolume(int track, double volume);
+    void setTrackPan(int track, double pan);
+    void setTrackMuted(int track, bool muted);
+    void setTrackSolo(int track, bool solo);
+    int createInstrument(const std::string& name);
+    int cloneInstrument(int sourceInstrument, const std::string& name);
+    void renameInstrument(int instrument, const std::string& name);
+    void setInstrumentWaveform(int instrument, const std::string& oscillator, Waveform waveform);
+    void setInstrumentParameter(int instrument, const std::string& parameter, double value);
     void fillScale(
         int track,
         int startRow,

@@ -2,12 +2,15 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 #include "Exporter.h"
 #include "MidiExporter.h"
 #include "Note.h"
+#include "PatchIO.h"
 #include "PatternEditor.h"
 #include "PatternView.h"
+#include "ProjectDiagnostics.h"
 #include "ProjectIO.h"
 #include "Tracker.h"
 
@@ -139,6 +142,132 @@ void testStepAutomation() {
     assert(song.patterns.front().step(0, 1).automation.empty());
 }
 
+void testArrangementCommands() {
+    arachno::Song song = arachno::makeDemoSong();
+    arachno::PatternEditorSession editor(song);
+
+    editor.applyCommand("tempo 96");
+    editor.applyCommand("rows-per-beat 8");
+    assert(song.bpm == 96.0);
+    assert(song.rowsPerBeat == 8);
+
+    editor.applyCommand("new-pattern Bridge 32");
+    assert(editor.cursor().pattern == 1);
+    assert(song.patterns.size() == 2);
+    assert(song.patterns[1].name() == "Bridge");
+    assert(song.patterns[1].rowCount() == 32);
+    assert(song.patterns[1].trackCount() == static_cast<int>(song.tracks.size()));
+
+    editor.applyCommand("pattern-name Drop");
+    assert(song.patterns[1].name() == "Drop");
+
+    editor.applyCommand("note C4 0.8");
+    assert(song.patterns[1].step(0, 0).note.has_value());
+
+    editor.applyCommand("clone-pattern DropCopy");
+    assert(editor.cursor().pattern == 2);
+    assert(song.patterns[2].name() == "DropCopy");
+    assert(song.patterns[2].step(0, 0).note.has_value());
+
+    editor.applyCommand("append-order");
+    assert(song.order.back() == 2);
+    editor.applyCommand("set-order 0 1 2");
+    assert((song.order == std::vector<int> {0, 1, 2}));
+
+    editor.applyCommand("track-volume 1 1.25");
+    editor.applyCommand("track-pan 1 -0.5");
+    editor.applyCommand("track-mute 1 true");
+    editor.applyCommand("track-solo 2 on");
+    assert(song.tracks[1].volume == 1.25);
+    assert(song.tracks[1].pan == -0.5);
+    assert(song.tracks[1].muted);
+    assert(song.tracks[2].solo);
+}
+
+void testTrackLifecycleCommands() {
+    arachno::Song song = arachno::makeDemoSong();
+    arachno::PatternEditorSession editor(song);
+
+    editor.applyCommand("new-track Counter");
+    assert(song.tracks.size() == 4);
+    assert(song.tracks[3].name == "Counter");
+    assert(song.patterns.front().trackCount() == 4);
+
+    editor.applyCommand("move 0 3");
+    editor.applyCommand("note C5 0.8");
+    assert(song.patterns.front().step(0, 3).note.has_value());
+
+    editor.applyCommand("duplicate-track 3 CounterCopy");
+    assert(song.tracks.size() == 5);
+    assert(song.tracks[4].name == "CounterCopy");
+    assert(song.patterns.front().trackCount() == 5);
+    assert(song.patterns.front().step(0, 4).note.has_value());
+    assert(song.patterns.front().step(0, 4).note->midi == 72);
+
+    editor.applyCommand("track-name 4 Answer");
+    assert(song.tracks[4].name == "Answer");
+
+    editor.applyCommand("clear-track 4");
+    assert(!song.patterns.front().step(0, 4).note.has_value());
+
+    editor.applyCommand("resize-pattern 96");
+    assert(song.patterns.front().rowCount() == 96);
+    assert(song.patterns.front().trackCount() == 5);
+}
+
+void testInstrumentCommands() {
+    arachno::Song song = arachno::makeDemoSong();
+    arachno::PatternEditorSession editor(song);
+
+    editor.applyCommand("new-instrument Glass");
+    assert(song.instruments.size() == 4);
+    assert(song.instruments[3].id == 3);
+    assert(song.instruments[3].patch.name == "Glass");
+
+    editor.applyCommand("instrument-wave 3 A sine");
+    editor.applyCommand("instrument-wave 3 B triangle");
+    editor.applyCommand("instrument-param 3 cutoff 0.91");
+    editor.applyCommand("instrument-param 3 vibrato 5");
+    assert(song.instruments[3].patch.oscillatorA == arachno::Waveform::Sine);
+    assert(song.instruments[3].patch.oscillatorB == arachno::Waveform::Triangle);
+    assert(song.instruments[3].patch.cutoff == 0.91);
+    assert(song.instruments[3].patch.vibratoCents == 5.0);
+
+    editor.applyCommand("clone-instrument 3 GlassCopy");
+    assert(song.instruments.size() == 5);
+    assert(song.instruments[4].patch.name == "GlassCopy");
+    assert(song.instruments[4].patch.cutoff == 0.91);
+
+    editor.applyCommand("instrument-name 4 Air");
+    assert(song.instruments[4].patch.name == "Air");
+
+    const std::string table = arachno::renderInstrumentTable(song);
+    assert(table.find("Glass") != std::string::npos);
+    assert(table.find("Air") != std::string::npos);
+}
+
+void testPatchRoundTrip() {
+    arachno::SynthPatch patch;
+    patch.name = "Glass";
+    patch.oscillatorA = arachno::Waveform::Sine;
+    patch.oscillatorB = arachno::Waveform::Triangle;
+    patch.cutoff = 0.91;
+    patch.vibratoCents = 5.0;
+    patch.ampEnvelope.attack = 0.03;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "arachno-glass.arachnopatch";
+    arachno::savePatch(patch, path.string());
+    const arachno::SynthPatch loaded = arachno::loadPatch(path.string());
+
+    assert(loaded.name == "Glass");
+    assert(loaded.oscillatorA == arachno::Waveform::Sine);
+    assert(loaded.oscillatorB == arachno::Waveform::Triangle);
+    assert(loaded.cutoff == 0.91);
+    assert(loaded.vibratoCents == 5.0);
+    assert(loaded.ampEnvelope.attack == 0.03);
+    std::filesystem::remove(path);
+}
+
 void testCompositionalTransforms() {
     arachno::Song song = arachno::makeDemoSong();
     arachno::PatternEditorSession editor(song);
@@ -168,6 +297,30 @@ void testPatternView() {
     assert(table.find("C2") != std::string::npos);
 }
 
+void testArrangementView() {
+    arachno::Song song = arachno::makeDemoSong();
+    arachno::PatternEditorSession editor(song);
+    editor.applyCommand("new-pattern Bridge 32");
+    editor.applyCommand("append-order");
+
+    const std::string table = arachno::renderArrangementTable(song);
+    assert(table.find("Arrangement") != std::string::npos);
+    assert(table.find("Bridge") != std::string::npos);
+    assert(table.find("total rows") != std::string::npos);
+}
+
+void testProjectDiagnostics() {
+    arachno::Song song = arachno::makeDemoSong();
+    const std::vector<arachno::ProjectDiagnostic> ok = arachno::validateProject(song);
+    assert(!arachno::hasErrors(ok));
+
+    song.patterns.front().step(0, 0).instrument = 99;
+    const std::vector<arachno::ProjectDiagnostic> broken = arachno::validateProject(song);
+    assert(arachno::hasErrors(broken));
+    const std::string formatted = arachno::formatDiagnostics(broken);
+    assert(formatted.find("missing instrument") != std::string::npos);
+}
+
 void testMidiExport() {
     const arachno::Song song = arachno::makeDemoSong();
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "arachno-smoke.mid";
@@ -190,8 +343,14 @@ int main() {
     testProjectRoundTrip();
     testPatternEditorCommands();
     testStepAutomation();
+    testArrangementCommands();
+    testTrackLifecycleCommands();
+    testInstrumentCommands();
+    testPatchRoundTrip();
     testCompositionalTransforms();
     testPatternView();
+    testArrangementView();
+    testProjectDiagnostics();
     testMidiExport();
     return 0;
 }

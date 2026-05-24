@@ -60,6 +60,11 @@ Inspect and render a saved project:
 
 ```bash
 ./build/ArachnoTracker --project-info demo.arachno
+./build/ArachnoTracker --validate demo.arachno
+./build/ArachnoTracker --arrangement demo.arachno
+./build/ArachnoTracker --instruments demo.arachno
+./build/ArachnoTracker --export-patch demo.arachno 1 bright.arachnopatch
+./build/ArachnoTracker --import-patch demo.arachno with-patch.arachno bright.arachnopatch BrightLead
 ./build/ArachnoTracker --show demo.arachno 0 0 32
 ./build/ArachnoTracker --render demo.arachno demo.wav
 ./build/ArachnoTracker --render-stems demo.arachno stems wav
@@ -102,11 +107,33 @@ Supported editor commands:
 - `gate ROWS`
 - `transpose SEMITONES`
 - `transpose SEMITONES track`
+- `tempo BPM`
+- `rows-per-beat N`
+- `new-pattern NAME ROWS [TRACKS]`
+- `clone-pattern [NAME]`
+- `pattern-name NAME`
+- `append-order [PATTERN]`
+- `set-order PATTERN...`
+- `new-track NAME`
+- `duplicate-track SRC [NAME]`
+- `track-name TRACK NAME`
+- `clear-track TRACK`
+- `resize-pattern ROWS`
+- `track-volume TRACK VALUE`
+- `track-pan TRACK VALUE`
+- `track-mute TRACK true|false`
+- `track-solo TRACK true|false`
+- `new-instrument NAME`
+- `clone-instrument SRC [NAME]`
+- `instrument-name INST NAME`
+- `instrument-wave INST A|B sine|square|saw|triangle|noise`
+- `instrument-param INST NAME VALUE`
 - `fill-scale TRACK START COUNT STRIDE ROOT SCALE INST [VELOCITY] [GATE]`
 - `euclid TRACK START STEPS PULSES ROOT INST [VELOCITY] [GATE]`
 - `param NAME VALUE`
 - `param-clear [NAME|*]`
 - `view` in interactive mode
+- `instruments` in interactive mode
 - `clear` or `rest`
 - `write` and `quit` in interactive mode
 

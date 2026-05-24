@@ -5,12 +5,15 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "AudioEngine.h"
 #include "Exporter.h"
 #include "MidiExporter.h"
+#include "PatchIO.h"
 #include "PatternEditor.h"
 #include "PatternView.h"
+#include "ProjectDiagnostics.h"
 #include "ProjectIO.h"
 #include "Tracker.h"
 
@@ -26,6 +29,12 @@ void printUsage() {
         << "  ArachnoTracker --render-stems <project.arachno> <output-dir> [wav|mp3|ogg]\n"
         << "  ArachnoTracker --export-midi <project.arachno> <output.mid>\n"
         << "  ArachnoTracker --project-info <project.arachno>\n"
+        << "  ArachnoTracker --validate <project.arachno>\n"
+        << "  ArachnoTracker --arrangement <project.arachno>\n"
+        << "  ArachnoTracker --instruments <project.arachno>\n"
+        << "  ArachnoTracker --export-patch <project.arachno> <instrument> <patch.arachnopatch>\n"
+        << "  ArachnoTracker --import-patch <input.arachno> <output.arachno> <patch.arachnopatch> [name]\n"
+        << "  ArachnoTracker --replace-patch <input.arachno> <output.arachno> <instrument> <patch.arachnopatch> [name]\n"
         << "  ArachnoTracker --show <project.arachno> [pattern] [start-row] [rows]\n"
         << "  ArachnoTracker --edit <input.arachno> <output.arachno> <command>...\n"
         << "  ArachnoTracker --edit-file <input.arachno> <output.arachno> <commands.txt>\n"
@@ -34,6 +43,11 @@ void printUsage() {
         << "Editor commands: pattern N, move ROW TRACK, up/down/left/right [N], note C4 [VEL], inst N, gate ROWS,\n"
         << "                 transpose N [track], fill-scale TRACK START COUNT STRIDE ROOT SCALE INST [VEL] [GATE],\n"
         << "                 euclid TRACK START STEPS PULSES ROOT INST [VEL] [GATE], param NAME VALUE,\n"
+        << "                 new-pattern NAME ROWS [TRACKS], clone-pattern [NAME], append-order [PATTERN], set-order ...,\n"
+        << "                 tempo BPM, rows-per-beat N, new-track NAME, duplicate-track SRC [NAME],\n"
+        << "                 track-name/volume/pan/mute/solo TRACK VALUE, clear-track TRACK, resize-pattern ROWS,\n"
+        << "                 new-instrument NAME, clone-instrument SRC [NAME], instrument-name INST NAME,\n"
+        << "                 instrument-wave INST A|B WAVE, instrument-param INST NAME VALUE,\n"
         << "                 param-clear [NAME|*], view, clear, write, quit\n"
         << "Native WAV export is built in. MP3 and OGG export use ffmpeg or avconv when available.\n";
 }
@@ -129,6 +143,32 @@ void applyCommandFile(arachno::PatternEditorSession& editor, const std::string& 
     }
 }
 
+int addPatchInstrument(arachno::Song& song, arachno::SynthPatch patch, const std::string& nameOverride) {
+    if (!nameOverride.empty()) {
+        patch.name = nameOverride;
+    }
+
+    arachno::Instrument instrument;
+    instrument.id = static_cast<int>(song.instruments.size());
+    instrument.patch = patch;
+    song.instruments.push_back(instrument);
+    return instrument.id;
+}
+
+void replacePatchInstrument(
+    arachno::Song& song,
+    int instrumentIndex,
+    arachno::SynthPatch patch,
+    const std::string& nameOverride) {
+    if (instrumentIndex < 0 || instrumentIndex >= static_cast<int>(song.instruments.size())) {
+        throw std::out_of_range("instrument index is out of range");
+    }
+    if (!nameOverride.empty()) {
+        patch.name = nameOverride;
+    }
+    song.instruments[static_cast<std::size_t>(instrumentIndex)].patch = patch;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -211,6 +251,87 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (std::string(argv[1]) == "--validate") {
+            if (argc < 3) {
+                std::cerr << "--validate requires a project path\n";
+                return 2;
+            }
+
+            const arachno::Song song = arachno::loadProject(argv[2]);
+            const std::vector<arachno::ProjectDiagnostic> diagnostics = arachno::validateProject(song);
+            std::cout << arachno::formatDiagnostics(diagnostics);
+            return arachno::hasErrors(diagnostics) ? 1 : 0;
+        }
+
+        if (std::string(argv[1]) == "--arrangement") {
+            if (argc < 3) {
+                std::cerr << "--arrangement requires a project path\n";
+                return 2;
+            }
+
+            std::cout << arachno::renderArrangementTable(arachno::loadProject(argv[2]));
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--instruments") {
+            if (argc < 3) {
+                std::cerr << "--instruments requires a project path\n";
+                return 2;
+            }
+
+            std::cout << arachno::renderInstrumentTable(arachno::loadProject(argv[2]));
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--export-patch") {
+            if (argc < 5) {
+                std::cerr << "--export-patch requires a project path, instrument, and patch path\n";
+                return 2;
+            }
+
+            const arachno::Song song = arachno::loadProject(argv[2]);
+            const int instrument = std::stoi(argv[3]);
+            if (instrument < 0 || instrument >= static_cast<int>(song.instruments.size())) {
+                throw std::out_of_range("instrument index is out of range");
+            }
+            arachno::savePatch(song.instruments[static_cast<std::size_t>(instrument)].patch, argv[4]);
+            std::cout << "Exported " << argv[4] << "\n";
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--import-patch") {
+            if (argc < 5) {
+                std::cerr << "--import-patch requires input project, output project, and patch path\n";
+                return 2;
+            }
+
+            arachno::Song song = arachno::loadProject(argv[2]);
+            const int instrument = addPatchInstrument(
+                song,
+                arachno::loadPatch(argv[4]),
+                argc >= 6 ? argv[5] : "");
+            arachno::saveProject(song, argv[3]);
+            std::cout << "Imported " << argv[4] << " as instrument " << instrument << "\n";
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--replace-patch") {
+            if (argc < 6) {
+                std::cerr << "--replace-patch requires input project, output project, instrument, and patch path\n";
+                return 2;
+            }
+
+            arachno::Song song = arachno::loadProject(argv[2]);
+            replacePatchInstrument(
+                song,
+                std::stoi(argv[4]),
+                arachno::loadPatch(argv[5]),
+                argc >= 7 ? argv[6] : "");
+            arachno::saveProject(song, argv[3]);
+            std::cout << "Replaced instrument " << argv[4] << " from " << argv[5] << "\n";
+            return 0;
+        }
+
         if (std::string(argv[1]) == "--show") {
             if (argc < 3) {
                 std::cerr << "--show requires a project path\n";
@@ -285,6 +406,10 @@ int main(int argc, char** argv) {
                 }
                 if (line == "view" || line == "v") {
                     std::cout << arachno::renderPatternTable(song, cursor.pattern, cursor.row, 16);
+                    continue;
+                }
+                if (line == "instruments" || line == "i") {
+                    std::cout << arachno::renderInstrumentTable(song);
                     continue;
                 }
                 std::cout << editor.applyCommand(line) << "\n";
