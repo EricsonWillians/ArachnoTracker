@@ -37,6 +37,16 @@ std::string readOptionalString(std::istringstream& in, const std::string& fallba
     return value.empty() ? fallback : value;
 }
 
+std::string readRemainder(std::istringstream& in, const std::string& field) {
+    std::string value;
+    std::getline(in, value);
+    const std::size_t first = value.find_first_not_of(" \t");
+    if (first == std::string::npos) {
+        throw std::invalid_argument("missing " + field);
+    }
+    return value.substr(first);
+}
+
 std::string lowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
@@ -104,6 +114,26 @@ void checkInstrumentIndex(const Song& song, int instrument) {
         throw std::out_of_range("instrument index is out of range");
     }
 }
+
+bool commandMutatesProject(const std::string& verb) {
+    return verb != "pattern"
+        && verb != "move"
+        && verb != "up"
+        && verb != "down"
+        && verb != "left"
+        && verb != "right"
+        && verb != "select"
+        && verb != "copy"
+        && verb != "undo"
+        && verb != "redo";
+}
+
+std::string commandVerb(const std::string& command) {
+    std::istringstream in(command);
+    std::string verb;
+    in >> verb;
+    return verb;
+}
 } // namespace
 
 PatternEditorSession::PatternEditorSession(Song& song) : song_(song) {
@@ -119,18 +149,109 @@ void PatternEditorSession::selectPattern(int pattern) {
     }
     cursor_.pattern = pattern;
     clampCursor();
+    clampSelection();
 }
 
 void PatternEditorSession::moveTo(int row, int track) {
     cursor_.row = row;
     cursor_.track = track;
     clampCursor();
+    selectRange(cursor_.row, cursor_.track, 1, 1);
 }
 
 void PatternEditorSession::moveBy(int rowDelta, int trackDelta) {
     cursor_.row += rowDelta;
     cursor_.track += trackDelta;
     clampCursor();
+    selectRange(cursor_.row, cursor_.track, 1, 1);
+}
+
+void PatternEditorSession::selectRange(int startRow, int startTrack, int rowCount, int trackCount) {
+    if (rowCount <= 0 || trackCount <= 0) {
+        throw std::invalid_argument("selection dimensions must be positive");
+    }
+
+    selection_.startRow = startRow;
+    selection_.startTrack = startTrack;
+    selection_.rowCount = rowCount;
+    selection_.trackCount = trackCount;
+    clampSelection();
+}
+
+void PatternEditorSession::copySelection() {
+    const Pattern& pattern = activePattern();
+    clipboard_.clear();
+    clipboard_.reserve(static_cast<std::size_t>(selection_.rowCount));
+    for (int rowOffset = 0; rowOffset < selection_.rowCount; ++rowOffset) {
+        std::vector<PatternStep> row;
+        row.reserve(static_cast<std::size_t>(selection_.trackCount));
+        for (int trackOffset = 0; trackOffset < selection_.trackCount; ++trackOffset) {
+            row.push_back(pattern.step(
+                selection_.startRow + rowOffset,
+                selection_.startTrack + trackOffset));
+        }
+        clipboard_.push_back(row);
+    }
+}
+
+void PatternEditorSession::cutSelection() {
+    copySelection();
+    clearSelection();
+}
+
+void PatternEditorSession::pasteClipboard(int row, int track) {
+    if (clipboard_.empty()) {
+        throw std::invalid_argument("clipboard is empty");
+    }
+
+    Pattern& pattern = activePattern();
+    const int targetRow = row >= 0 ? row : cursor_.row;
+    const int targetTrack = track >= 0 ? track : cursor_.track;
+    for (std::size_t rowOffset = 0; rowOffset < clipboard_.size(); ++rowOffset) {
+        const int destinationRow = targetRow + static_cast<int>(rowOffset);
+        if (destinationRow < 0 || destinationRow >= pattern.rowCount()) {
+            continue;
+        }
+
+        for (std::size_t trackOffset = 0; trackOffset < clipboard_[rowOffset].size(); ++trackOffset) {
+            const int destinationTrack = targetTrack + static_cast<int>(trackOffset);
+            if (destinationTrack < 0 || destinationTrack >= pattern.trackCount()) {
+                continue;
+            }
+            pattern.step(destinationRow, destinationTrack) = clipboard_[rowOffset][trackOffset];
+        }
+    }
+}
+
+void PatternEditorSession::clearSelection() {
+    Pattern& pattern = activePattern();
+    for (int rowOffset = 0; rowOffset < selection_.rowCount; ++rowOffset) {
+        for (int trackOffset = 0; trackOffset < selection_.trackCount; ++trackOffset) {
+            pattern.step(
+                selection_.startRow + rowOffset,
+                selection_.startTrack + trackOffset) = PatternStep {};
+        }
+    }
+}
+
+void PatternEditorSession::undo() {
+    if (undoStack_.empty()) {
+        return;
+    }
+
+    redoStack_.push_back(snapshot());
+    restore(undoStack_.back());
+    undoStack_.pop_back();
+}
+
+void PatternEditorSession::redo() {
+    if (redoStack_.empty()) {
+        return;
+    }
+
+    undoStack_.push_back(snapshot());
+    restore(redoStack_.back());
+    redoStack_.pop_back();
 }
 
 void PatternEditorSession::enterNote(const Note& note, float velocity) {
@@ -159,6 +280,34 @@ void PatternEditorSession::setGate(double gateRows) {
     activeStep().gate = gateRows;
 }
 
+void PatternEditorSession::setProbability(double probability) {
+    if (probability < 0.0 || probability > 1.0) {
+        throw std::invalid_argument("probability must be between 0 and 1");
+    }
+    activeStep().probability = probability;
+}
+
+void PatternEditorSession::clearProbability() {
+    activeStep().probability.reset();
+}
+
+void PatternEditorSession::setRetrigger(int count, double spacingRows, double velocityDecay) {
+    if (count <= 0) {
+        throw std::invalid_argument("retrigger count must be positive");
+    }
+    if (spacingRows <= 0.0) {
+        throw std::invalid_argument("retrigger spacing must be positive");
+    }
+    if (velocityDecay < 0.0 || velocityDecay > 1.0) {
+        throw std::invalid_argument("retrigger velocity decay must be between 0 and 1");
+    }
+
+    PatternStep& step = activeStep();
+    step.retriggerCount = count;
+    step.retriggerSpacingRows = spacingRows;
+    step.retriggerVelocityDecay = velocityDecay;
+}
+
 void PatternEditorSession::setAutomation(const std::string& parameter, double value) {
     SynthPatch validationPatch;
     if (!setSynthPatchParameter(validationPatch, parameter, value)) {
@@ -173,6 +322,41 @@ void PatternEditorSession::clearAutomation(const std::string& parameter) {
 
 void PatternEditorSession::clearAllAutomation() {
     activeStep().automation.clear();
+}
+
+void PatternEditorSession::setStepEffect(const std::string& name, const std::string& parameter, double value) {
+    if (name.empty()) {
+        throw std::invalid_argument("effect name must not be empty");
+    }
+    if (parameter.empty()) {
+        throw std::invalid_argument("effect parameter must not be empty");
+    }
+    PatternStep& step = activeStep();
+    auto effectIt = std::find_if(step.effects.begin(), step.effects.end(), [&name](const EffectCommand& effect) {
+        return lowerCopy(effect.name) == lowerCopy(name);
+    });
+    if (effectIt == step.effects.end()) {
+        EffectCommand effect;
+        effect.name = name;
+        effect.parameters[parameter] = value;
+        step.effects.push_back(effect);
+    } else {
+        effectIt->parameters[parameter] = value;
+    }
+}
+
+void PatternEditorSession::clearStepEffect(const std::string& name) {
+    PatternStep& step = activeStep();
+    const std::string normalized = lowerCopy(name);
+    step.effects.erase(
+        std::remove_if(step.effects.begin(), step.effects.end(), [&normalized](const EffectCommand& effect) {
+            return lowerCopy(effect.name) == normalized;
+        }),
+        step.effects.end());
+}
+
+void PatternEditorSession::clearAllStepEffects() {
+    activeStep().effects.clear();
 }
 
 void PatternEditorSession::transposeCurrent(int semitones) {
@@ -210,6 +394,25 @@ void PatternEditorSession::setRowsPerBeat(int rowsPerBeat) {
     song_.rowsPerBeat = rowsPerBeat;
 }
 
+void PatternEditorSession::setTitle(const std::string& title) {
+    if (title.empty()) {
+        throw std::invalid_argument("title must not be empty");
+    }
+    song_.title = title;
+}
+
+void PatternEditorSession::setAuthor(const std::string& author) {
+    song_.author = author;
+}
+
+void PatternEditorSession::setDescription(const std::string& description) {
+    song_.description = description;
+}
+
+void PatternEditorSession::setNotes(const std::string& notes) {
+    song_.notes = notes;
+}
+
 void PatternEditorSession::renameActivePattern(const std::string& name) {
     if (name.empty()) {
         throw std::invalid_argument("pattern name must not be empty");
@@ -241,10 +444,52 @@ int PatternEditorSession::cloneActivePattern(const std::string& name) {
     return cursor_.pattern;
 }
 
+void PatternEditorSession::deletePattern(int pattern) {
+    checkPatternIndex(song_, pattern);
+    if (song_.patterns.size() <= 1) {
+        throw std::invalid_argument("project must keep at least one pattern");
+    }
+
+    song_.patterns.erase(song_.patterns.begin() + pattern);
+    std::vector<int> remappedOrder;
+    remappedOrder.reserve(song_.order.size());
+    for (int patternIndex : song_.order) {
+        if (patternIndex == pattern) {
+            continue;
+        }
+        remappedOrder.push_back(patternIndex > pattern ? patternIndex - 1 : patternIndex);
+    }
+    if (remappedOrder.empty()) {
+        remappedOrder.push_back(0);
+    }
+    song_.order = remappedOrder;
+    cursor_.pattern = std::clamp(cursor_.pattern, 0, static_cast<int>(song_.patterns.size() - 1));
+    clampCursor();
+}
+
 void PatternEditorSession::appendOrder(int pattern) {
     const int patternToAppend = pattern >= 0 ? pattern : cursor_.pattern;
     checkPatternIndex(song_, patternToAppend);
     song_.order.push_back(patternToAppend);
+}
+
+void PatternEditorSession::insertOrder(int index, int pattern) {
+    const int patternToInsert = pattern >= 0 ? pattern : cursor_.pattern;
+    checkPatternIndex(song_, patternToInsert);
+    if (index < 0 || index > static_cast<int>(song_.order.size())) {
+        throw std::out_of_range("order insert index is out of range");
+    }
+    song_.order.insert(song_.order.begin() + index, patternToInsert);
+}
+
+void PatternEditorSession::removeOrderEntry(int index) {
+    if (song_.order.size() <= 1) {
+        throw std::invalid_argument("arrangement order must keep at least one entry");
+    }
+    if (index < 0 || index >= static_cast<int>(song_.order.size())) {
+        throw std::out_of_range("order index is out of range");
+    }
+    song_.order.erase(song_.order.begin() + index);
 }
 
 void PatternEditorSession::setOrder(const std::vector<int>& order) {
@@ -298,6 +543,22 @@ int PatternEditorSession::duplicateTrack(int sourceTrack, const std::string& nam
     cursor_.track = destinationTrack;
     clampCursor();
     return destinationTrack;
+}
+
+void PatternEditorSession::deleteTrack(int track) {
+    checkTrackIndex(song_, track);
+    if (song_.tracks.size() <= 1) {
+        throw std::invalid_argument("project must keep at least one track");
+    }
+
+    song_.tracks.erase(song_.tracks.begin() + track);
+    for (Pattern& pattern : song_.patterns) {
+        if (track < pattern.trackCount()) {
+            pattern.removeTrack(track);
+        }
+    }
+    cursor_.track = std::clamp(cursor_.track, 0, static_cast<int>(song_.tracks.size() - 1));
+    clampCursor();
 }
 
 void PatternEditorSession::renameTrack(int track, const std::string& name) {
@@ -385,8 +646,12 @@ void PatternEditorSession::setInstrumentWaveform(int instrument, const std::stri
         patch.oscillatorA = waveform;
     } else if (normalized == "b" || normalized == "osc_b" || normalized == "oscillator_b") {
         patch.oscillatorB = waveform;
+    } else if (normalized == "c" || normalized == "osc_c" || normalized == "oscillator_c") {
+        patch.oscillatorC = waveform;
+    } else if (normalized == "d" || normalized == "osc_d" || normalized == "oscillator_d") {
+        patch.oscillatorD = waveform;
     } else {
-        throw std::invalid_argument("oscillator must be A or B");
+        throw std::invalid_argument("oscillator must be A, B, C, or D");
     }
 }
 
@@ -491,12 +756,44 @@ std::string PatternEditorSession::applyCommand(const std::string& command) {
         return "noop";
     }
 
-    if (verb == "pattern") {
-        selectPattern(readValue<int>(in, "pattern"));
-    } else if (verb == "tempo") {
+    const bool mutatesProject = commandMutatesProject(verb);
+    const Snapshot before = snapshot();
+
+    try {
+        if (verb == "pattern") {
+            selectPattern(readValue<int>(in, "pattern"));
+        } else if (verb == "undo") {
+            undo();
+        } else if (verb == "redo") {
+            redo();
+        } else if (verb == "select") {
+            const int row = readValue<int>(in, "selection row");
+            const int track = readValue<int>(in, "selection track");
+            const int rows = readValue<int>(in, "selection rows");
+            const int tracks = readValue<int>(in, "selection tracks");
+            selectRange(row, track, rows, tracks);
+        } else if (verb == "copy") {
+            copySelection();
+        } else if (verb == "cut") {
+            cutSelection();
+        } else if (verb == "paste") {
+            const int row = readOptionalInt(in, -1);
+            const int track = readOptionalInt(in, -1);
+            pasteClipboard(row, track);
+        } else if (verb == "clear-selection") {
+            clearSelection();
+        } else if (verb == "tempo") {
         setTempo(readValue<double>(in, "tempo"));
     } else if (verb == "rows-per-beat") {
         setRowsPerBeat(readValue<int>(in, "rows per beat"));
+    } else if (verb == "title") {
+        setTitle(readRemainder(in, "title"));
+    } else if (verb == "author") {
+        setAuthor(readRemainder(in, "author"));
+    } else if (verb == "description") {
+        setDescription(readRemainder(in, "description"));
+    } else if (verb == "notes") {
+        setNotes(readRemainder(in, "notes"));
     } else if (verb == "pattern-name") {
         renameActivePattern(readValue<std::string>(in, "pattern name"));
     } else if (verb == "new-pattern") {
@@ -506,8 +803,15 @@ std::string PatternEditorSession::applyCommand(const std::string& command) {
         createPattern(name, rows, tracks);
     } else if (verb == "clone-pattern") {
         cloneActivePattern(readOptionalString(in, ""));
+    } else if (verb == "delete-pattern") {
+        deletePattern(readOptionalInt(in, cursor_.pattern));
     } else if (verb == "append-order") {
         appendOrder(readOptionalInt(in, -1));
+    } else if (verb == "insert-order") {
+        const int index = readValue<int>(in, "order index");
+        insertOrder(index, readOptionalInt(in, -1));
+    } else if (verb == "remove-order") {
+        removeOrderEntry(readValue<int>(in, "order index"));
     } else if (verb == "set-order") {
         std::vector<int> order;
         int pattern = 0;
@@ -520,6 +824,8 @@ std::string PatternEditorSession::applyCommand(const std::string& command) {
     } else if (verb == "duplicate-track") {
         const int sourceTrack = readValue<int>(in, "source track");
         duplicateTrack(sourceTrack, readOptionalString(in, ""));
+    } else if (verb == "delete-track") {
+        deleteTrack(readValue<int>(in, "track"));
     } else if (verb == "track-name") {
         const int track = readValue<int>(in, "track");
         renameTrack(track, readValue<std::string>(in, "track name"));
@@ -585,6 +891,19 @@ std::string PatternEditorSession::applyCommand(const std::string& command) {
         setInstrument(readValue<int>(in, "instrument"));
     } else if (verb == "gate") {
         setGate(readValue<double>(in, "gate"));
+    } else if (verb == "probability" || verb == "prob") {
+        std::string value;
+        in >> value;
+        if (value.empty() || value == "clear" || value == "off") {
+            clearProbability();
+        } else {
+            setProbability(std::stod(value));
+        }
+    } else if (verb == "retrig" || verb == "retrigger") {
+        const int count = readValue<int>(in, "retrigger count");
+        const double spacing = readOptionalDouble(in, 0.25);
+        const double decay = readOptionalDouble(in, 0.85);
+        setRetrigger(count, spacing, decay);
     } else if (verb == "param") {
         const std::string parameter = readValue<std::string>(in, "parameter");
         const double value = readValue<double>(in, "value");
@@ -596,6 +915,23 @@ std::string PatternEditorSession::applyCommand(const std::string& command) {
             clearAllAutomation();
         } else {
             clearAutomation(parameter);
+        }
+    } else if (verb == "fx" || verb == "effect") {
+        const std::string name = readValue<std::string>(in, "effect name");
+        const double value = readValue<double>(in, "effect value");
+        setStepEffect(name, "value", value);
+    } else if (verb == "fxp" || verb == "effect-param") {
+        const std::string name = readValue<std::string>(in, "effect name");
+        const std::string parameter = readValue<std::string>(in, "effect parameter");
+        const double value = readValue<double>(in, "effect value");
+        setStepEffect(name, parameter, value);
+    } else if (verb == "fx-clear" || verb == "effect-clear") {
+        std::string name;
+        in >> name;
+        if (name.empty() || name == "*") {
+            clearAllStepEffects();
+        } else {
+            clearStepEffect(name);
         }
     } else if (verb == "transpose") {
         const int semitones = readValue<int>(in, "semitones");
@@ -647,12 +983,47 @@ std::string PatternEditorSession::applyCommand(const std::string& command) {
     } else {
         throw std::invalid_argument("unknown editor command: " + verb);
     }
+    } catch (...) {
+        if (mutatesProject) {
+            restore(before);
+        }
+        throw;
+    }
+
+    if (mutatesProject) {
+        rememberUndo(before);
+        redoStack_.clear();
+    }
 
     std::ostringstream out;
     out << "pattern=" << cursor_.pattern
         << " row=" << cursor_.row
         << " track=" << cursor_.track;
     return out.str();
+}
+
+EditorCommandResult PatternEditorSession::tryApplyCommand(const std::string& command) {
+    const std::string verb = commandVerb(command);
+    const bool canUndoBefore = canUndo();
+    const bool canRedoBefore = canRedo();
+    const bool mayChangeProject = commandMutatesProject(verb)
+        || (verb == "undo" && canUndoBefore)
+        || (verb == "redo" && canRedoBefore);
+
+    EditorCommandResult result;
+    try {
+        result.message = applyCommand(command);
+        result.ok = true;
+        result.projectChanged = mayChangeProject && result.message != "noop";
+        result.editorStateChanged = result.message != "noop";
+    } catch (const std::exception& error) {
+        result.ok = false;
+        result.error = error.what();
+    } catch (...) {
+        result.ok = false;
+        result.error = "unknown editor command error";
+    }
+    return result;
 }
 
 Pattern& PatternEditorSession::activePattern() {
@@ -671,6 +1042,34 @@ void PatternEditorSession::clampCursor() {
     const Pattern& pattern = activePattern();
     cursor_.row = std::clamp(cursor_.row, 0, pattern.rowCount() - 1);
     cursor_.track = std::clamp(cursor_.track, 0, pattern.trackCount() - 1);
+}
+
+void PatternEditorSession::rememberUndo(const Snapshot& snapshot) {
+    constexpr std::size_t maxUndoDepth = 128;
+    undoStack_.push_back(snapshot);
+    if (undoStack_.size() > maxUndoDepth) {
+        undoStack_.erase(undoStack_.begin());
+    }
+}
+
+PatternEditorSession::Snapshot PatternEditorSession::snapshot() const {
+    return Snapshot {song_, cursor_, selection_};
+}
+
+void PatternEditorSession::restore(const Snapshot& snapshot) {
+    song_ = snapshot.song;
+    cursor_ = snapshot.cursor;
+    selection_ = snapshot.selection;
+    clampCursor();
+    clampSelection();
+}
+
+void PatternEditorSession::clampSelection() {
+    const Pattern& pattern = activePattern();
+    selection_.startRow = std::clamp(selection_.startRow, 0, pattern.rowCount() - 1);
+    selection_.startTrack = std::clamp(selection_.startTrack, 0, pattern.trackCount() - 1);
+    selection_.rowCount = std::max(1, std::min(selection_.rowCount, pattern.rowCount() - selection_.startRow));
+    selection_.trackCount = std::max(1, std::min(selection_.trackCount, pattern.trackCount() - selection_.startTrack));
 }
 
 } // namespace arachno

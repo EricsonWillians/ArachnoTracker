@@ -52,6 +52,18 @@ void Pattern::resizeTracks(int tracks) {
     }
 }
 
+void Pattern::removeTrack(int track) {
+    checkBounds(0, track);
+    if (trackCount_ <= 1) {
+        throw std::invalid_argument("pattern must keep at least one track");
+    }
+
+    for (PatternRow& row : rows_) {
+        row.steps.erase(row.steps.begin() + track);
+    }
+    --trackCount_;
+}
+
 void Pattern::checkBounds(int row, int track) const {
     if (row < 0 || row >= rowCount()) {
         throw std::out_of_range("pattern row is out of range");

@@ -19,6 +19,9 @@ struct Track {
 class Song {
 public:
     std::string title = "Untitled";
+    std::string author;
+    std::string description;
+    std::string notes;
     double bpm = 138.0;
     int rowsPerBeat = 4;
     int sampleRate = 48000;
@@ -48,5 +51,7 @@ private:
 };
 
 Song makeDemoSong();
+Song makeTemplateSong(const std::string& templateName);
+std::vector<std::string> demoTemplateNames();
 
 } // namespace arachno

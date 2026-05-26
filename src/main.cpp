@@ -8,7 +8,12 @@
 #include <vector>
 
 #include "AudioEngine.h"
+#include "EditorActions.h"
+#include "EditorCommandPalette.h"
+#include "EditorShortcuts.h"
 #include "Exporter.h"
+#include "GUI.h"
+#include "MidiImporter.h"
 #include "MidiExporter.h"
 #include "PatchIO.h"
 #include "PatternEditor.h"
@@ -23,15 +28,25 @@ void printUsage() {
     std::cout
         << "ArachnoTracker\n"
         << "Usage:\n"
-        << "  ArachnoTracker --demo <output.wav|output.mp3|output.ogg>\n"
-        << "  ArachnoTracker --write-demo <project.arachno>\n"
+        << "  ArachnoTracker                      # starts the GUI shell\n"
+        << "  ArachnoTracker --demo <output.wav|output.mp3|output.ogg> [template]\n"
+        << "  ArachnoTracker --write-demo <project.arachno> [template]\n"
+        << "  ArachnoTracker --list-demo-templates\n"
         << "  ArachnoTracker --render <project.arachno> <output.wav|output.mp3|output.ogg>\n"
         << "  ArachnoTracker --render-stems <project.arachno> <output-dir> [wav|mp3|ogg]\n"
         << "  ArachnoTracker --export-midi <project.arachno> <output.mid>\n"
+        << "  ArachnoTracker --import-midi <input.mid> <output.arachno> [rows-per-beat] [pattern-rows]\n"
         << "  ArachnoTracker --project-info <project.arachno>\n"
         << "  ArachnoTracker --validate <project.arachno>\n"
         << "  ArachnoTracker --arrangement <project.arachno>\n"
         << "  ArachnoTracker --instruments <project.arachno>\n"
+        << "  ArachnoTracker --stats <project.arachno>\n"
+        << "  ArachnoTracker --actions\n"
+        << "  ArachnoTracker --shortcuts\n"
+        << "  ArachnoTracker --palette [query]\n"
+        << "  ArachnoTracker --gui [project.arachno]\n"
+        << "  ArachnoTracker --gui-window [project.arachno]\n"
+        << "  ArachnoTracker --gui-shell [project.arachno]\n"
         << "  ArachnoTracker --export-patch <project.arachno> <instrument> <patch.arachnopatch>\n"
         << "  ArachnoTracker --import-patch <input.arachno> <output.arachno> <patch.arachnopatch> [name]\n"
         << "  ArachnoTracker --replace-patch <input.arachno> <output.arachno> <instrument> <patch.arachnopatch> [name]\n"
@@ -41,20 +56,29 @@ void printUsage() {
         << "  ArachnoTracker --interactive <input.arachno> <output.arachno>\n"
         << "  ArachnoTracker --info\n\n"
         << "Editor commands: pattern N, move ROW TRACK, up/down/left/right [N], note C4 [VEL], inst N, gate ROWS,\n"
+        << "                 select ROW TRACK ROWS TRACKS, copy, cut, paste [ROW] [TRACK], clear-selection,\n"
+        << "                 undo, redo,\n"
         << "                 transpose N [track], fill-scale TRACK START COUNT STRIDE ROOT SCALE INST [VEL] [GATE],\n"
-        << "                 euclid TRACK START STEPS PULSES ROOT INST [VEL] [GATE], param NAME VALUE,\n"
-        << "                 new-pattern NAME ROWS [TRACKS], clone-pattern [NAME], append-order [PATTERN], set-order ...,\n"
+        << "                 euclid TRACK START STEPS PULSES ROOT INST [VEL] [GATE], probability VALUE|clear,\n"
+        << "                 retrig COUNT [SPACING] [DECAY], param NAME VALUE, fx NAME VALUE, fxp NAME PARAM VALUE,\n"
+        << "                 new-pattern NAME ROWS [TRACKS], clone-pattern [NAME], delete-pattern [PATTERN],\n"
+        << "                 append-order [PATTERN], insert-order INDEX [PATTERN], remove-order INDEX, set-order ...,\n"
         << "                 tempo BPM, rows-per-beat N, new-track NAME, duplicate-track SRC [NAME],\n"
-        << "                 track-name/volume/pan/mute/solo TRACK VALUE, clear-track TRACK, resize-pattern ROWS,\n"
+        << "                 delete-track TRACK, track-name/volume/pan/mute/solo TRACK VALUE, clear-track TRACK,\n"
+        << "                 resize-pattern ROWS,\n"
+        << "                 title TEXT, author TEXT, description TEXT, notes TEXT,\n"
         << "                 new-instrument NAME, clone-instrument SRC [NAME], instrument-name INST NAME,\n"
-        << "                 instrument-wave INST A|B WAVE, instrument-param INST NAME VALUE,\n"
-        << "                 param-clear [NAME|*], view, clear, write, quit\n"
+        << "                 instrument-wave INST A|B|C|D WAVE, instrument-param INST NAME VALUE,\n"
+        << "                 param-clear [NAME|*], fx-clear [NAME|*], view, clear, write, quit\n"
         << "Native WAV export is built in. MP3 and OGG export use ffmpeg or avconv when available.\n";
 }
 
 void printSongInfo(const arachno::Song& song) {
     std::cout
         << "Title: " << song.title << "\n"
+        << "Author: " << (song.author.empty() ? "<unset>" : song.author) << "\n"
+        << "Description: " << (song.description.empty() ? "<unset>" : song.description) << "\n"
+        << "Notes: " << (song.notes.empty() ? "<unset>" : song.notes) << "\n"
         << "Tracks: " << song.tracks.size() << "\n"
         << "Instruments: " << song.instruments.size() << "\n"
         << "Patterns: " << song.patterns.size() << "\n"
@@ -173,7 +197,12 @@ void replacePatchInstrument(
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 1 || std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h") {
+        if (argc == 1) {
+            arachno::ApplicationSession session;
+            return arachno::runGui(session, std::cin, std::cout);
+        }
+
+        if (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h") {
             printUsage();
             return 0;
         }
@@ -184,6 +213,66 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (std::string(argv[1]) == "--actions") {
+            std::cout << arachno::renderEditorActionTable();
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--shortcuts") {
+            const std::vector<arachno::ShortcutBinding> bindings = arachno::defaultEditorShortcuts();
+            const std::vector<arachno::ShortcutConflict> conflicts = arachno::validateEditorShortcuts(bindings);
+            std::cout << arachno::renderEditorShortcutTable(bindings);
+            if (!conflicts.empty()) {
+                std::cout << "\nConflicts\n";
+                for (const arachno::ShortcutConflict& conflict : conflicts) {
+                    std::cout << conflict.shortcut << ":";
+                    for (const std::string& actionId : conflict.actionIds) {
+                        std::cout << " " << actionId;
+                    }
+                    std::cout << "\n";
+                }
+            }
+            return conflicts.empty() ? 0 : 1;
+        }
+
+        if (std::string(argv[1]) == "--palette") {
+            arachno::Song song = arachno::makeDemoSong();
+            arachno::PatternEditorSession editor(song);
+            const std::string query = argc >= 3 ? argv[2] : "";
+            std::cout << arachno::renderEditorCommandPalette(
+                arachno::buildEditorCommandPalette(editor, arachno::defaultEditorShortcuts(), query));
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--gui"
+            || std::string(argv[1]) == "--gui-window"
+            || std::string(argv[1]) == "--gui-shell") {
+            arachno::ApplicationSession session;
+            if (argc >= 3) {
+                const arachno::AppOperationResult loaded = session.loadProjectFile(argv[2]);
+                if (!loaded.ok) {
+                    std::cerr << "Failed to load project: " << loaded.error << "\n";
+                    return 1;
+                }
+            }
+            arachno::GuiFrontend frontend = arachno::GuiFrontend::Auto;
+            if (std::string(argv[1]) == "--gui-window") {
+                frontend = arachno::GuiFrontend::X11Window;
+            } else if (std::string(argv[1]) == "--gui-shell") {
+                frontend = arachno::GuiFrontend::Shell;
+            }
+            return arachno::runGui(session, std::cin, std::cout, frontend);
+        }
+
+        if (std::string(argv[1]) == "--list-demo-templates") {
+            const std::vector<std::string> templates = arachno::demoTemplateNames();
+            std::cout << "Demo templates:\n";
+            for (const std::string& name : templates) {
+                std::cout << "  " << name << "\n";
+            }
+            return 0;
+        }
+
         if (std::string(argv[1]) == "--demo") {
             if (argc < 3) {
                 std::cerr << "--demo requires an output path\n";
@@ -191,7 +280,8 @@ int main(int argc, char** argv) {
             }
 
             const std::string outputPath = argv[2];
-            arachno::Song song = arachno::makeDemoSong();
+            const std::string templateName = argc >= 4 ? argv[3] : "darkwave_foundation";
+            arachno::Song song = arachno::makeTemplateSong(templateName);
             renderSongToPath(song, outputPath);
             return 0;
         }
@@ -202,7 +292,8 @@ int main(int argc, char** argv) {
                 return 2;
             }
 
-            arachno::saveProject(arachno::makeDemoSong(), argv[2]);
+            const std::string templateName = argc >= 4 ? argv[3] : "darkwave_foundation";
+            arachno::saveProject(arachno::makeTemplateSong(templateName), argv[2]);
             std::cout << "Wrote " << argv[2] << "\n";
             return 0;
         }
@@ -238,6 +329,44 @@ int main(int argc, char** argv) {
             const arachno::Song song = arachno::loadProject(argv[2]);
             arachno::exportMidiFile(song, argv[3]);
             std::cout << "Exported " << argv[3] << "\n";
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--import-midi") {
+            if (argc < 4) {
+                std::cerr << "--import-midi requires an input MIDI path and an output project path\n";
+                return 2;
+            }
+
+            arachno::MidiImportOptions options;
+            if (argc >= 5) {
+                options.rowsPerBeat = std::stoi(argv[4]);
+            }
+            if (argc >= 6) {
+                options.patternRows = std::stoi(argv[5]);
+            }
+            const arachno::MidiImportReport report = arachno::importMidiFile(argv[2], options);
+            arachno::saveProject(report.song, argv[3]);
+            std::cout
+                << "Imported " << argv[2]
+                << " -> " << argv[3]
+                << " (" << report.importedNoteCount << " notes, "
+                << report.importedTrackCount << " tracks, "
+                << report.song.instruments.size() << " instruments)\n";
+            for (const arachno::MidiImportTrackMapping& mapping : report.trackMappings) {
+                std::cout
+                    << "  track " << mapping.trackIndex
+                    << " \"" << mapping.trackName << "\""
+                    << " -> instrument " << mapping.instrumentIndex
+                    << " \"" << mapping.instrumentName << "\""
+                    << " [src track " << mapping.midiSourceTrack
+                    << " ch " << (mapping.midiChannel + 1)
+                    << " prog " << (mapping.dominantProgram + 1)
+                    << "]\n";
+            }
+            for (const arachno::MidiImportWarning& warning : report.warnings) {
+                std::cout << "warning: " << warning.message << "\n";
+            }
             return 0;
         }
 
@@ -280,6 +409,16 @@ int main(int argc, char** argv) {
             }
 
             std::cout << arachno::renderInstrumentTable(arachno::loadProject(argv[2]));
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--stats") {
+            if (argc < 3) {
+                std::cerr << "--stats requires a project path\n";
+                return 2;
+            }
+
+            std::cout << arachno::renderProjectStats(arachno::loadProject(argv[2]));
             return 0;
         }
 
@@ -412,7 +551,12 @@ int main(int argc, char** argv) {
                     std::cout << arachno::renderInstrumentTable(song);
                     continue;
                 }
-                std::cout << editor.applyCommand(line) << "\n";
+                const arachno::EditorCommandResult result = editor.tryApplyCommand(line);
+                if (result.ok) {
+                    std::cout << result.message << "\n";
+                } else {
+                    std::cout << "error: " << result.error << "\n";
+                }
             }
             return 0;
         }

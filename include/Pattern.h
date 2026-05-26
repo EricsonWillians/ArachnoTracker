@@ -18,6 +18,7 @@ public:
     int trackCount() const { return trackCount_; }
     void resizeRows(int rows);
     void resizeTracks(int tracks);
+    void removeTrack(int track);
 
     PatternStep& step(int row, int track);
     const PatternStep& step(int row, int track) const;

@@ -34,6 +34,39 @@ std::string readQuoted(std::istream& in, const std::string& field) {
     return value;
 }
 
+int waveformToIndex(Waveform waveform) {
+    switch (waveform) {
+        case Waveform::Sine:
+            return 0;
+        case Waveform::Square:
+            return 1;
+        case Waveform::Saw:
+            return 2;
+        case Waveform::Triangle:
+            return 3;
+        case Waveform::Noise:
+            return 4;
+    }
+    return 2;
+}
+
+Waveform waveformFromIndex(int value) {
+    switch (value) {
+        case 0:
+            return Waveform::Sine;
+        case 1:
+            return Waveform::Square;
+        case 2:
+            return Waveform::Saw;
+        case 3:
+            return Waveform::Triangle;
+        case 4:
+            return Waveform::Noise;
+        default:
+            return Waveform::Saw;
+    }
+}
+
 void validateSong(const Song& song) {
     if (song.bpm <= 0.0) {
         throw std::runtime_error("project bpm must be positive");
@@ -62,6 +95,9 @@ void saveProject(const Song& song, const std::string& path) {
 
     out << "arachno_project " << projectFileVersion << "\n";
     out << "title " << std::quoted(song.title) << "\n";
+    out << "author " << std::quoted(song.author) << "\n";
+    out << "description " << std::quoted(song.description) << "\n";
+    out << "notes " << std::quoted(song.notes) << "\n";
     out << "bpm " << song.bpm << "\n";
     out << "rows_per_beat " << song.rowsPerBeat << "\n";
     out << "sample_rate " << song.sampleRate << "\n";
@@ -104,6 +140,58 @@ void saveProject(const Song& song, const std::string& path) {
             << " " << patch.filterEnvelope.decay
             << " " << patch.filterEnvelope.sustain
             << " " << patch.filterEnvelope.release
+            << " " << patch.pitchEnvelopeSemitones
+            << " " << patch.pitchEnvelopeDecay
+            << " " << patch.ringMod
+            << " " << patch.hardSync
+            << " " << patch.bitCrush
+            << " " << patch.sampleRateReduction
+            << " " << patch.highPass
+            << " " << patch.unisonVoices
+            << " " << patch.unisonDetuneCents
+            << " " << patch.stereoSpread
+            << " " << patch.click
+            << " " << patch.transientNoise
+            << " " << patch.transientDecay
+            << " " << patch.pulseWidth
+            << " " << patch.pwmDepth
+            << " " << patch.fmAmount
+            << " " << patch.fmRatio
+            << " " << patch.chorusMix
+            << " " << patch.chorusRate
+            << " " << patch.chorusDepth
+            << " " << waveformToIndex(patch.oscillatorC)
+            << " " << (patch.oscillatorAEnabled ? 1.0 : 0.0)
+            << " " << (patch.oscillatorBEnabled ? 1.0 : 0.0)
+            << " " << (patch.oscillatorCEnabled ? 1.0 : 0.0)
+            << " " << patch.oscillatorCMix
+            << " " << patch.detuneCCents
+            << " " << (patch.subEnabled ? 1.0 : 0.0)
+            << " " << (patch.noiseEnabled ? 1.0 : 0.0)
+            << " " << (patch.fmEnabled ? 1.0 : 0.0)
+            << " " << patch.fmFeedback
+            << " " << (patch.ringEnabled ? 1.0 : 0.0)
+            << " " << (patch.hardSyncEnabled ? 1.0 : 0.0)
+            << " " << (patch.chorusEnabled ? 1.0 : 0.0)
+            << " " << (patch.bitCrushEnabled ? 1.0 : 0.0)
+            << " " << patch.wavefold
+            << " " << patch.combMix
+            << " " << patch.combTime
+            << " " << patch.combFeedback
+            << " " << patch.lfoFilterDepth
+            << " " << patch.lfoPanDepth
+            << " " << waveformToIndex(patch.oscillatorD)
+            << " " << (patch.oscillatorDEnabled ? 1.0 : 0.0)
+            << " " << patch.oscillatorDMix
+            << " " << patch.detuneDCents
+            << " " << patch.noiseTone
+            << " " << patch.transientShape
+            << " " << patch.transientPitchSemitones
+            << " " << patch.transientPitchDecay
+            << " " << patch.transientBurstCount
+            << " " << patch.transientBurstSpacing
+            << " " << patch.transientBurstDecay
+            << " " << patch.transientTone
             << "\n";
     }
 
@@ -135,6 +223,20 @@ void saveProject(const Song& song, const std::string& path) {
                 for (const auto& [name, value] : step.automation) {
                     out << " " << std::quoted(name) << " " << value;
                 }
+                out << " " << step.effects.size();
+                for (const EffectCommand& effect : step.effects) {
+                    out << " " << std::quoted(effect.name)
+                        << " " << effect.parameters.size();
+                    for (const auto& [parameter, parameterValue] : effect.parameters) {
+                        out << " " << std::quoted(parameter)
+                            << " " << parameterValue;
+                    }
+                }
+                out << " " << (step.probability.has_value() ? 1 : 0)
+                    << " " << step.probability.value_or(1.0)
+                    << " " << step.retriggerCount
+                    << " " << step.retriggerSpacingRows
+                    << " " << step.retriggerVelocityDecay;
                 out << "\n";
             }
         }
@@ -157,14 +259,27 @@ Song loadProject(const std::string& path) {
 
     expectToken(in, "arachno_project");
     const int version = readValue<int>(in, "project version");
-    if (version != projectFileVersion) {
+    if (version < minimumProjectFileVersion || version > projectFileVersion) {
         throw std::runtime_error("unsupported project version: " + std::to_string(version));
     }
 
     Song song;
     expectToken(in, "title");
     song.title = readQuoted(in, "title");
-    expectToken(in, "bpm");
+
+    std::string token;
+    in >> token;
+    if (token == "author") {
+        song.author = readQuoted(in, "author");
+        expectToken(in, "description");
+        song.description = readQuoted(in, "description");
+        expectToken(in, "notes");
+        song.notes = readQuoted(in, "notes");
+        expectToken(in, "bpm");
+    } else if (token != "bpm") {
+        throw std::runtime_error("expected token 'author' or 'bpm', got '" + token + "'");
+    }
+
     song.bpm = readValue<double>(in, "bpm");
     expectToken(in, "rows_per_beat");
     song.rowsPerBeat = readValue<int>(in, "rows_per_beat");
@@ -217,6 +332,87 @@ Song loadProject(const std::string& path) {
         patch.filterEnvelope.decay = readValue<double>(in, "filter decay");
         patch.filterEnvelope.sustain = readValue<double>(in, "filter sustain");
         patch.filterEnvelope.release = readValue<double>(in, "filter release");
+        std::string extra;
+        std::getline(in, extra);
+        std::istringstream extraIn(extra);
+        (void)(extraIn >> patch.pitchEnvelopeSemitones
+            >> patch.pitchEnvelopeDecay
+            >> patch.ringMod
+            >> patch.hardSync
+            >> patch.bitCrush
+            >> patch.sampleRateReduction
+            >> patch.highPass
+            >> patch.unisonVoices
+            >> patch.unisonDetuneCents
+            >> patch.stereoSpread
+            >> patch.click
+            >> patch.transientNoise
+            >> patch.transientDecay
+            >> patch.pulseWidth
+            >> patch.pwmDepth
+            >> patch.fmAmount
+            >> patch.fmRatio
+            >> patch.chorusMix
+            >> patch.chorusRate
+            >> patch.chorusDepth);
+        int oscCIndex = waveformToIndex(patch.oscillatorC);
+        double oscAEnabled = patch.oscillatorAEnabled ? 1.0 : 0.0;
+        double oscBEnabled = patch.oscillatorBEnabled ? 1.0 : 0.0;
+        double oscCEnabled = patch.oscillatorCEnabled ? 1.0 : 0.0;
+        double oscDEnabled = patch.oscillatorDEnabled ? 1.0 : 0.0;
+        double subEnabled = patch.subEnabled ? 1.0 : 0.0;
+        double noiseEnabled = patch.noiseEnabled ? 1.0 : 0.0;
+        double fmEnabled = patch.fmEnabled ? 1.0 : 0.0;
+        double ringEnabled = patch.ringEnabled ? 1.0 : 0.0;
+        double hardSyncEnabled = patch.hardSyncEnabled ? 1.0 : 0.0;
+        double chorusEnabled = patch.chorusEnabled ? 1.0 : 0.0;
+        double bitCrushEnabled = patch.bitCrushEnabled ? 1.0 : 0.0;
+        int oscDIndex = waveformToIndex(patch.oscillatorD);
+        (void)(extraIn >> oscCIndex
+            >> oscAEnabled
+            >> oscBEnabled
+            >> oscCEnabled
+            >> patch.oscillatorCMix
+            >> patch.detuneCCents
+            >> subEnabled
+            >> noiseEnabled
+            >> fmEnabled
+            >> patch.fmFeedback
+            >> ringEnabled
+            >> hardSyncEnabled
+            >> chorusEnabled
+            >> bitCrushEnabled
+            >> patch.wavefold
+            >> patch.combMix
+            >> patch.combTime
+            >> patch.combFeedback
+            >> patch.lfoFilterDepth
+            >> patch.lfoPanDepth);
+        (void)(extraIn >> oscDIndex
+            >> oscDEnabled
+            >> patch.oscillatorDMix
+            >> patch.detuneDCents);
+        (void)(extraIn >> patch.noiseTone
+            >> patch.transientShape
+            >> patch.transientPitchSemitones
+            >> patch.transientPitchDecay
+            >> patch.transientBurstCount
+            >> patch.transientBurstSpacing
+            >> patch.transientBurstDecay
+            >> patch.transientTone);
+        patch.oscillatorC = waveformFromIndex(oscCIndex);
+        patch.oscillatorD = waveformFromIndex(oscDIndex);
+        patch.oscillatorAEnabled = oscAEnabled >= 0.5;
+        patch.oscillatorBEnabled = oscBEnabled >= 0.5;
+        patch.oscillatorCEnabled = oscCEnabled >= 0.5;
+        patch.oscillatorDEnabled = oscDEnabled >= 0.5;
+        patch.subEnabled = subEnabled >= 0.5;
+        patch.noiseEnabled = noiseEnabled >= 0.5;
+        patch.fmEnabled = fmEnabled >= 0.5;
+        patch.ringEnabled = ringEnabled >= 0.5;
+        patch.hardSyncEnabled = hardSyncEnabled >= 0.5;
+        patch.chorusEnabled = chorusEnabled >= 0.5;
+        patch.bitCrushEnabled = bitCrushEnabled >= 0.5;
         song.instruments.push_back(instrument);
     }
 
@@ -256,6 +452,33 @@ Song loadProject(const std::string& path) {
                 const std::string name = readQuoted(in, "automation name");
                 const double value = readValue<double>(in, "automation value");
                 step.automation[name] = value;
+            }
+            if (version >= 2) {
+                const int effectCount = readValue<int>(in, "effect count");
+                for (int effectIndex = 0; effectIndex < effectCount; ++effectIndex) {
+                    EffectCommand effect;
+                    effect.name = readQuoted(in, "effect name");
+                    const int parameterCount = readValue<int>(in, "effect parameter count");
+                    for (int parameterIndex = 0; parameterIndex < parameterCount; ++parameterIndex) {
+                        const std::string parameter = readQuoted(in, "effect parameter");
+                        const double parameterValue = readValue<double>(in, "effect parameter value");
+                        effect.parameters[parameter] = parameterValue;
+                    }
+                    step.effects.push_back(effect);
+                }
+            }
+            std::string extra;
+            std::getline(in, extra);
+            std::istringstream extraIn(extra);
+            int hasProbability = 0;
+            double probability = 1.0;
+            if (extraIn >> hasProbability >> probability) {
+                if (hasProbability != 0) {
+                    step.probability = probability;
+                }
+                extraIn >> step.retriggerCount
+                    >> step.retriggerSpacingRows
+                    >> step.retriggerVelocityDecay;
             }
         }
         song.patterns.push_back(pattern);
