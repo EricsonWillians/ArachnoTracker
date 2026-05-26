@@ -1,92 +1,146 @@
 # ArachnoTracker
 
-ArachnoTracker is becoming a Linux-first compositional tracker: pattern-based sequencing, a built-in synthesizer, and offline export for finished audio.
+ArachnoTracker is a Linux-first tracker workstation for darkwave / EBM-oriented composition:
+pattern sequencing, a deep native synth engine, MIDI import/export, Python scripting, and audio rendering.
 
-The current codebase is a headless foundation for the engine. It renders a demo song from tracker patterns into stereo audio and exports WAV natively, with MP3 and OGG export through common Linux encoders.
+The project is in active development and already usable for real composition and export workflows.
 
-## What Works Now
+## Highlights
 
-- Value-based song model with tracks, instruments, patterns, rows, steps, note gates, microtiming, velocity, gain, and pan.
-- Built-in polyphonic synthesizer with sine, square, saw, triangle, noise, dual oscillator mix, detune, pulse width/PWM, FM phase modulation, unison/spread, per-voice chorus, sub oscillator, noise, low-pass/high-pass shaping, resonance, filter envelope, pitch envelope, percussion transient click/noise, LFO vibrato/tremolo, ring modulation, hard sync, drive, bitcrush/sample-rate reduction, ADSR envelope, and per-patch pan/gain.
-- Offline renderer that schedules pattern events into sample buffers.
-- Realtime playback/preview session contract for GUI transport controls, loop playback, seeking, follow-cursor state, instrument auditioning, step preview, and block rendering.
-- Linux audio runtime contract for backend/device selection, buffer validation, latency estimates, render-block bridging, and underrun health reporting.
-- Dedicated audition requests/results for patch, drum, instrument, and step previews, plus deterministic preview clip rendering for future browsers and waveform thumbnails.
-- Versioned `.arachno` project save/load.
-- GUI-facing application session with project path, dirty state, editor view model, playback snapshot, diagnostics, last-message reporting, load/save operations, and command dispatch.
-- Versioned application settings for recent projects, export defaults, UI layout preferences, follow-playback behavior, shortcut overrides, and Linux audio runtime preferences.
-- Structured project diagnostics with severity, stable codes, target locations, formatted CLI output, and GUI-ready error/warning counts.
-- File compatibility inspection for projects, patches, settings, and command files before GUI load/import operations.
-- Autosave/recovery helpers for deterministic recovery paths, loadable recovery inspection, snapshot saving, restoring, and cleanup.
-- Project lifecycle planning for unsaved-change prompts, open-file preflight, recovery offers, save-as requirements, and close/quit decisions.
-- Application action bridge for project, transport, recovery, and editor actions with typed execution results and GUI palette entries.
-- Structured action parameter schemas for GUI forms, command-palette prompts, typed editor command construction, and path-required actions.
-- Application task tracking for long-running export, render, script, recovery, and plugin-scan workflows with progress, outputs, and errors.
-- GUI-facing session event stream for project/editor/settings/playback/message/task changes.
-- Cancellable async task runner for background render, export, script, recovery, and plugin workflows.
-- Command-based pattern editing suitable for terminal workflows and future TUI/GUI integration.
-- Discoverable editor action registry for future GUI menus, command palettes, toolbar actions, and shortcut defaults.
-- Shortcut registry with normalization, lookup, and conflict detection for customizable keymaps.
-- Command palette model that combines actions, shortcuts, search filtering, and enabled/disabled state.
-- Structured pattern grid snapshots with cursor and selection metadata for future GUI/TUI rendering.
-- Read-only editor view model for GUI sidebars, order lists, track strips, instrument browsers, status bars, and active pattern grids.
-- Inspector-ready active step, selection, and clipboard summaries for GUI property panels and paste previews.
-- Non-throwing editor command results for GUI-friendly error display and project dirty-state tracking.
-- Native 16-bit stereo WAV export.
-- MP3 and OGG export when `ffmpeg` or `avconv` is installed.
-- GUI-facing export workflows with structured requests/results for mixdowns, stems, and MIDI.
-- Per-track stem export for downstream mixing and arrangement workflows.
-- Standard MIDI file export for DAWs, hardware sequencers, and external Linux synth chains.
-- Python composition SDK for generating, loading, and transforming `.arachno` projects, `.arachnopatch` files, command scripts, and patch-generator plugins.
-- Script integration surface for Python SDK command construction, generated project/patch/command-file inspection, and GUI-safe artifact import.
-- CTest smoke tests for tracker timing, audio rendering, and WAV export.
+- Pattern-based tracker engine with per-step note, velocity, gate, microtiming, probability, retrig, and automation.
+- Native polyphonic synthesizer with four oscillators, FM, unison, sync, ring, PWM, filter envelopes, modulation, drive, lo-fi controls, transient shaping, and per-voice stereo processing.
+- Patch lifecycle: create, clone, rename, import/export `.arachnopatch`, replace in-project patches.
+- Realtime playback session model with transport state, loop/playhead tracking, follow behavior, and audition paths.
+- Native WAV export plus MP3/OGG via `ffmpeg`/`avconv`, stem export, and MIDI export.
+- MIDI import pipeline with track/instrument mapping and normalization logic.
+- GUI workbench (X11) plus shell GUI fallback for headless environments.
+- Python SDK for scripted composition, patch generation, and project transforms.
 
-## Building
+## Current Runtime Status
+
+- Works well for many projects and moderate track counts.
+- Heavy sessions (30+ dense tracks with complex patches/effects) can still show realtime lag/artifacts depending on CPU/audio path.
+- Recent optimization passes improved synth hot-path behavior, render chunking, and UI redraw stability, but realtime backend work is still in progress.
+
+## Build
 
 ```bash
 cmake -S . -B build
 cmake --build build
 ```
 
-The current engine has no mandatory third-party dependency beyond a C++17 compiler and CMake.
+Requirements:
+- C++17 compiler
+- CMake
+- Optional for MP3/OGG export: `ffmpeg` or `avconv`
 
-Run the GUI (tries X11 window first, falls back to shell if unavailable):
+## Quick Start
+
+Launch default UI entrypoint:
 
 ```bash
 ./build/ArachnoTracker
 ```
 
-Force a specific frontend:
+Frontend modes:
 
 ```bash
-./build/ArachnoTracker --gui-window demo.arachno
-./build/ArachnoTracker --gui-shell demo.arachno
+./build/ArachnoTracker --gui [project.arachno]
+./build/ArachnoTracker --gui-window [project.arachno]
+./build/ArachnoTracker --gui-shell [project.arachno]
 ```
 
-Window GUI tracker shortcuts:
+If no X11 display is available, the app falls back to GUI shell.
 
-- `Z S X D C V G B H N J M` for chromatic note entry in the armed octave.
-- `Q 2 W 3 E R 5 T 6 Y 7 U` for the next octave row.
-- `[` / `]` cycle armed instrument, `Alt+0..9` select instrument directly.
-- `-` / `+` change octave, `,` / `.` change note velocity.
-- `Ctrl+0..8` sets octave instantly.
-- Sidebar has clickable octave selector (`0..8`, `-`, `+`) and a clickable piano keyboard that inserts notes at cursor.
-- `Return` inserts the currently selected sidebar/piano note at cursor.
-- `Tab` toggles step-advance after note entry.
-- `Arrows` move the cursor, `Backspace`/`Delete` clear step.
-- `Shift+Arrows` expands a rectangular selection from the anchor point.
-- `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy-cut-paste selection, `Ctrl+A` selects whole active pattern.
-- `Space` play/stop, `Shift+Space` pause, `Ctrl+Space` preview cursor step.
-- Mouse: left-click moves cursor, left-drag creates selection, middle-click previews the pointed step.
-- Mouse: `Alt+left-drag` paints notes with current armed instrument/velocity.
-- Mouse: wheel scrolls rows, `Ctrl+wheel` resizes active pattern row count.
-- Mouse: click transport controls, order slots, track header controls (select/mute/solo), instrument list, and pattern-row controls.
-- Top bar includes quick `NEW`, `OPEN`, `SAVE`, and `EXPORT` actions.
-- Theme system includes `MS-DOS` and `HIGH CONTRAST` modes (toggle with `Ctrl+H`).
-- Mouse: drag vertical/horizontal split bars to resize tracker grid and side panels.
-- Live playback now streams to Linux audio using `aplay` when available (float output first, S16 fallback).
+## Composition Flow (GUI)
 
-Python scripting uses only the Python standard library:
+1. Create or load a project (`NEW` / `LOAD`).
+2. Select/arm instrument and octave.
+3. Enter notes with tracker keys or piano widgets.
+4. Build patterns, then arrange with order slots.
+5. Switch between pattern-only playback and full-song playback.
+6. Shape sounds in the synth designer (`PATCH` button).
+7. Export mixdown/stems/MIDI.
+
+Core note input keys:
+- `Z S X D C V G B H N J M`
+- `Q 2 W 3 E R 5 T 6 Y 7 U`
+
+Core control keys:
+- `Arrows`: cursor navigation
+- `Shift+Arrows`: range selection
+- `Ctrl+C/X/V`: clipboard
+- `Space`: play/stop
+- `F5`: play song
+- `F6`: play pattern
+- `Ctrl+Space`: preview step
+- `Ctrl+0..8`: set octave
+- `[` / `]`: cycle instrument
+
+Theme toggle:
+- `Ctrl+H` (`MS-DOS` and `HIGH CONTRAST`)
+
+## Synth + Patch Workflow
+
+The synth designer window supports:
+- Oscillator A/B/C/D waveform selection and enable/disable
+- Modulation and FX pages
+- Audition from keyboard and clickable piano keys
+- Patch import as new, patch load into selected instrument, and patch export
+
+Patch CLI helpers:
+
+```bash
+./build/ArachnoTracker --export-patch demo.arachno 1 lead.arachnopatch
+./build/ArachnoTracker --import-patch demo.arachno out.arachno lead.arachnopatch NewLead
+./build/ArachnoTracker --replace-patch demo.arachno out.arachno 1 lead.arachnopatch NewLead
+```
+
+## MIDI Workflow
+
+Import MIDI directly:
+
+```bash
+./build/ArachnoTracker --import-midi input.mid output.arachno [rows-per-beat] [pattern-rows]
+```
+
+Export MIDI:
+
+```bash
+./build/ArachnoTracker --export-midi project.arachno output.mid
+```
+
+Inspect import-ready track mappings from UI diagnostics/sidebar after import.
+
+## Rendering and Export
+
+Render project:
+
+```bash
+./build/ArachnoTracker --render project.arachno output.wav
+./build/ArachnoTracker --render project.arachno output.mp3
+./build/ArachnoTracker --render project.arachno output.ogg
+./build/ArachnoTracker --render-stems project.arachno stems wav
+```
+
+Render demo templates:
+
+```bash
+./build/ArachnoTracker --list-demo-templates
+./build/ArachnoTracker --demo demo.wav
+./build/ArachnoTracker --demo demo_night.ogg night_drive
+./build/ArachnoTracker --write-demo demo_project.arachno night_drive
+```
+
+Install encoder dependency (Ubuntu/Debian):
+
+```bash
+sudo apt-get install ffmpeg
+```
+
+## Python Scripting SDK
+
+Generate/edit projects with pure-stdlib Python support:
 
 ```bash
 PYTHONPATH=python python3 examples/scripts/python_ebm_sketch.py
@@ -94,170 +148,73 @@ PYTHONPATH=python python3 examples/scripts/python_ebm_sketch.py
 ./build/ArachnoTracker --render python_ebm_sketch.arachno python_ebm_sketch.wav
 ```
 
-The SDK also has a small module CLI:
+Module CLI:
 
 ```bash
 PYTHONPATH=python python3 -m arachnotracker new-ebm community_starter.arachno --title "Community Starter"
 PYTHONPATH=python python3 -m arachnotracker patch-plugin examples/scripts/industrial_patch_plugin.py industrial_bass.arachnopatch --name IndustrialBass
 ```
 
-## Exporting Audio
+Detailed API docs:
+- [docs/PYTHON_API.md](docs/PYTHON_API.md)
 
-Render the built-in demo song:
+## CLI Reference
+
+Show canonical usage:
 
 ```bash
-./build/ArachnoTracker --demo demo.wav
-./build/ArachnoTracker --demo demo.mp3
-./build/ArachnoTracker --demo demo.ogg
-./build/ArachnoTracker --list-demo-templates
-./build/ArachnoTracker --demo demo_factory.wav factory_pulse
-./build/ArachnoTracker --demo demo_night.ogg night_drive
+./build/ArachnoTracker --help
 ```
 
-WAV export is built into ArachnoTracker. MP3 and OGG export use `ffmpeg` first, then `avconv` as a fallback:
+Useful inspection commands:
 
 ```bash
-sudo apt-get install ffmpeg
-```
-
-The application core also exposes `ExportRequest` / `ExportPreflight` / `ExportResult` workflows for future GUI export dialogs. Supported targets are mixdown audio, per-track stems, and MIDI, with structured output file metadata, expected output paths, total work estimates, progress callbacks, and non-throwing error reporting.
-
-Inspect the demo project:
-
-```bash
-./build/ArachnoTracker --info
-```
-
-## Project Files
-
-Create a reusable project file:
-
-```bash
-./build/ArachnoTracker --write-demo demo.arachno
-./build/ArachnoTracker --write-demo factory_pulse.arachno factory_pulse
-```
-
-Load curated examples directly:
-
-```bash
-./build/ArachnoTracker --gui examples/projects/darkwave_foundation.arachno
-./build/ArachnoTracker --gui examples/projects/factory_pulse.arachno
-./build/ArachnoTracker --gui examples/projects/night_drive.arachno
-./build/ArachnoTracker --gui examples/projects/ebm_percussion_lab.arachno
-./build/ArachnoTracker --gui examples/projects/cinematic_darkwave_builder.arachno
-./build/ArachnoTracker --gui examples/projects/composition_starter_blank.arachno
-```
-
-Project pack details live in [examples/projects/README.md](examples/projects/README.md).
-
-Inspect and render a saved project:
-
-```bash
-./build/ArachnoTracker --project-info demo.arachno
-./build/ArachnoTracker --validate demo.arachno
-./build/ArachnoTracker --arrangement demo.arachno
-./build/ArachnoTracker --instruments demo.arachno
-./build/ArachnoTracker --stats demo.arachno
+./build/ArachnoTracker --project-info project.arachno
+./build/ArachnoTracker --validate project.arachno
+./build/ArachnoTracker --arrangement project.arachno
+./build/ArachnoTracker --instruments project.arachno
+./build/ArachnoTracker --stats project.arachno
 ./build/ArachnoTracker --actions
 ./build/ArachnoTracker --shortcuts
-./build/ArachnoTracker --palette paste
-./build/ArachnoTracker --gui demo.arachno
-./build/ArachnoTracker --export-patch demo.arachno 1 bright.arachnopatch
-./build/ArachnoTracker --import-patch demo.arachno with-patch.arachno bright.arachnopatch BrightLead
-./build/ArachnoTracker --show demo.arachno 0 0 32
-./build/ArachnoTracker --render demo.arachno demo.wav
-./build/ArachnoTracker --render-stems demo.arachno stems wav
-./build/ArachnoTracker --export-midi demo.arachno demo.mid
+./build/ArachnoTracker --palette
 ```
 
-The project format is line-oriented, versioned, and diff-friendly. It stores title, tempo, sample rate, tracks, instruments, darkwave/EBM-oriented synth patch parameters, patterns, steps, order list, gates, velocities, microtiming, and automation values.
-
-## Command Editing
-
-Apply tracker edits without opening a GUI:
+Command editing:
 
 ```bash
-./build/ArachnoTracker --edit demo.arachno edited.arachno \
-  "move 4 1" \
-  "inst 1" \
-  "note D5 0.8" \
-  "gate 1.25"
+./build/ArachnoTracker --edit in.arachno out.arachno "move 4 1" "inst 2" "note C4 0.8"
+./build/ArachnoTracker --edit-file in.arachno out.arachno commands.txt
+./build/ArachnoTracker --interactive in.arachno out.arachno
 ```
 
-Apply repeatable edits from a command file:
+## Project Format
+
+- `.arachno`: versioned, line-oriented project format (diff-friendly).
+- Stores song metadata, timing, tracks, instruments/patches, patterns, order, and step-level data.
+- `.arachnopatch`: portable native synth patch format.
+
+## Performance Notes (Important)
+
+For dense sessions, realtime behavior depends heavily on patch complexity and output backend path.
+
+Recommended today:
+- Use `--render` (offline) for final-quality bounce when realtime is stressed.
+- Reduce extreme unison/chorus/transient-heavy usage on many simultaneous voices.
+- Prefer 48k sample rate for realtime preview unless you need higher.
+- Keep MP3/OGG export for final pass, not realtime monitoring.
+
+Realtime backend modernization is on the active roadmap to improve heavy-project stability without quality loss.
+
+## Testing
 
 ```bash
-./build/ArachnoTracker --edit-file demo.arachno generated.arachno commands.arachno-edit
+ctest --test-dir build --output-on-failure
 ```
 
-Start a line-oriented terminal editing session:
+## Example Projects
 
-```bash
-./build/ArachnoTracker --interactive demo.arachno edited.arachno
-```
-
-Start the session-driven GUI workbench shell (action palette, schemas, sync/events, transport):
-
-```bash
-./build/ArachnoTracker --gui demo.arachno
-```
-
-Supported editor commands:
-
-- `pattern N`
-- `move ROW TRACK`
-- `up [N]`, `down [N]`, `left [N]`, `right [N]`
-- `select ROW TRACK ROWS TRACKS`
-- `copy`
-- `cut`
-- `paste [ROW] [TRACK]`
-- `clear-selection`
-- `undo`
-- `redo`
-- `note C4 [VELOCITY]`
-- `inst N`
-- `gate ROWS`
-- `probability VALUE` or `probability clear`
-- `retrig COUNT [SPACING_ROWS] [VELOCITY_DECAY]`
-- `transpose SEMITONES`
-- `transpose SEMITONES track`
-- `tempo BPM`
-- `rows-per-beat N`
-- `title TEXT`
-- `author TEXT`
-- `description TEXT`
-- `notes TEXT`
-- `new-pattern NAME ROWS [TRACKS]`
-- `clone-pattern [NAME]`
-- `delete-pattern [PATTERN]`
-- `pattern-name NAME`
-- `append-order [PATTERN]`
-- `insert-order INDEX [PATTERN]`
-- `remove-order INDEX`
-- `set-order PATTERN...`
-- `new-track NAME`
-- `duplicate-track SRC [NAME]`
-- `delete-track TRACK`
-- `track-name TRACK NAME`
-- `clear-track TRACK`
-- `resize-pattern ROWS`
-- `track-volume TRACK VALUE`
-- `track-pan TRACK VALUE`
-- `track-mute TRACK true|false`
-- `track-solo TRACK true|false`
-- `new-instrument NAME`
-- `clone-instrument SRC [NAME]`
-- `instrument-name INST NAME`
-- `instrument-wave INST A|B|C|D sine|square|saw|triangle|noise`
-- `instrument-param INST NAME VALUE`
-- `fill-scale TRACK START COUNT STRIDE ROOT SCALE INST [VELOCITY] [GATE]`
-- `euclid TRACK START STEPS PULSES ROOT INST [VELOCITY] [GATE]`
-- `param NAME VALUE`
-- `param-clear [NAME|*]`
-- `view` in interactive mode
-- `instruments` in interactive mode
-- `clear` or `rest`
-- `write` and `quit` in interactive mode
+See curated templates in:
+- [examples/projects/README.md](examples/projects/README.md)
 
 For GUI/TUI integration, inspect the canonical action registry:
 
