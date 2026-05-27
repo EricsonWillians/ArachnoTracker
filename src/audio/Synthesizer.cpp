@@ -91,15 +91,23 @@ double unisonPosition(int index, int count) {
     return -1.0 + 2.0 * static_cast<double>(index) / static_cast<double>(count - 1);
 }
 
-template <std::size_t Size>
-double readDelay(const std::array<double, Size>& buffer, int writeIndex, double delaySamples) {
-    const double readPosition = static_cast<double>(writeIndex) - delaySamples;
-    const double wrapped = std::fmod(readPosition + static_cast<double>(Size), static_cast<double>(Size));
-    const int indexA = static_cast<int>(wrapped);
+template <typename T, std::size_t Size>
+double readDelay(const std::array<T, Size>& buffer, int writeIndex, double delaySamples) {
+    double readPosition = static_cast<double>(writeIndex) - delaySamples;
+    const double sizeAsDouble = static_cast<double>(Size);
+    if (readPosition < 0.0) {
+        readPosition += sizeAsDouble;
+        if (readPosition < 0.0) {
+            readPosition = std::fmod(readPosition, sizeAsDouble) + sizeAsDouble;
+        }
+    } else if (readPosition >= sizeAsDouble) {
+        readPosition -= sizeAsDouble;
+    }
+    const int indexA = static_cast<int>(readPosition);
     const int indexB = (indexA + 1) % static_cast<int>(Size);
-    const double fraction = wrapped - static_cast<double>(indexA);
-    return buffer[static_cast<std::size_t>(indexA)] * (1.0 - fraction)
-        + buffer[static_cast<std::size_t>(indexB)] * fraction;
+    const double fraction = readPosition - static_cast<double>(indexA);
+    return static_cast<double>(buffer[static_cast<std::size_t>(indexA)]) * (1.0 - fraction)
+        + static_cast<double>(buffer[static_cast<std::size_t>(indexB)]) * fraction;
 }
 } // namespace
 
@@ -156,8 +164,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
     }
     const double invSampleRate = sampleRate_ > 0.0 ? (1.0 / sampleRate_) : 0.0;
     const int activeVoiceCount = static_cast<int>(voices_.size());
-    const bool heavyLoad = activeVoiceCount > 56;
-    const bool extremeLoad = activeVoiceCount > 96;
+    const bool heavyLoad = activeVoiceCount > 40;
+    const bool extremeLoad = activeVoiceCount > 72;
 
     for (int sample = 0; sample < sampleCount; ++sample) {
         double mixedLeft = 0.0;
@@ -323,14 +331,15 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 + (oscA * (oscB + oscC * 0.5 + oscD * 0.35)) * ringAmount;
             value *= levelComp;
 
-            const double cutoff = std::pow(clamp01(
+            const double cutoffNormalized = clamp01(
                 voice.patch.cutoff
                     + filterEnvelope * voice.patch.filterEnvelopeAmount
                     + lfo * clamp01(voice.patch.lfoFilterDepth) * 0.35
                     + (velocityNorm - 0.6) * 0.16
-                    + (static_cast<double>(voice.note.midi - 60) / 48.0) * 0.12), 2.0);
+                    + (static_cast<double>(voice.note.midi - 60) / 48.0) * 0.12);
+            const double cutoff = cutoffNormalized * cutoffNormalized;
             const double cutoffHz = std::clamp(
-                25.0 * std::pow(2.0, cutoff * 10.0),
+                25.0 * std::exp2(cutoff * 10.0),
                 20.0,
                 sampleRate_ * 0.45);
             const double alpha = std::clamp(1.0 - std::exp(-twoPi * cutoffHz / sampleRate_), 0.001, 0.999);
@@ -341,9 +350,11 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             voice.filterState2 += alpha * (voice.filterState - voice.filterState2);
             value = voice.filterState2;
 
-            const double combMix = heavyLoad
+            const double combMix = extremeLoad
+                ? 0.0
+                : (heavyLoad
                 ? clamp01(voice.patch.combMix) * 0.35
-                : clamp01(voice.patch.combMix);
+                : clamp01(voice.patch.combMix));
             if (combMix > 0.0) {
                 const double fb = clamp01(voice.patch.combFeedback) * 0.985;
                 voice.combState = value + voice.combState * fb;
@@ -440,8 +451,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     voice.chorusRight,
                     voice.chorusIndex,
                     baseDelay - depthSamples * chorusLfo);
-                voice.chorusLeft[static_cast<std::size_t>(voice.chorusIndex)] = voiceLeft;
-                voice.chorusRight[static_cast<std::size_t>(voice.chorusIndex)] = voiceRight;
+                voice.chorusLeft[static_cast<std::size_t>(voice.chorusIndex)] = static_cast<float>(voiceLeft);
+                voice.chorusRight[static_cast<std::size_t>(voice.chorusIndex)] = static_cast<float>(voiceRight);
                 voice.chorusIndex = (voice.chorusIndex + 1) % static_cast<int>(voice.chorusLeft.size());
                 voiceLeft = voiceLeft * (1.0 - chorusMix) + delayedLeft * chorusMix;
                 voiceRight = voiceRight * (1.0 - chorusMix) + delayedRight * chorusMix;

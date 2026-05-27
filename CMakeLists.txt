@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
 find_package(X11 REQUIRED)
+find_package(ALSA)
 
 add_library(arachno_core
     src/audio/AudioEngine.cpp
@@ -56,8 +57,27 @@ target_include_directories(arachno_core PUBLIC
 )
 
 target_include_directories(arachno_core PUBLIC ${X11_INCLUDE_DIR})
+if(ALSA_FOUND)
+    if(DEFINED ALSA_INCLUDE_DIRS)
+        target_include_directories(arachno_core PUBLIC ${ALSA_INCLUDE_DIRS})
+    elseif(DEFINED ALSA_INCLUDE_DIR)
+        target_include_directories(arachno_core PUBLIC ${ALSA_INCLUDE_DIR})
+    endif()
+endif()
 
 target_link_libraries(arachno_core PUBLIC Threads::Threads ${X11_LIBRARIES})
+if(ALSA_FOUND)
+    target_compile_definitions(arachno_core PRIVATE ARACHNO_HAS_ALSA=1)
+    if(TARGET ALSA::ALSA)
+        target_link_libraries(arachno_core PUBLIC ALSA::ALSA)
+    elseif(DEFINED ALSA_LIBRARIES)
+        target_link_libraries(arachno_core PUBLIC ${ALSA_LIBRARIES})
+    elseif(DEFINED ALSA_LIBRARY)
+        target_link_libraries(arachno_core PUBLIC ${ALSA_LIBRARY})
+    endif()
+else()
+    target_compile_definitions(arachno_core PRIVATE ARACHNO_HAS_ALSA=0)
+endif()
 
 target_compile_options(arachno_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>

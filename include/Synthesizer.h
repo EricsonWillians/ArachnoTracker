@@ -52,8 +52,8 @@ private:
         double lfoPhase = 0.0;
         double chorusPhase = 0.0;
         double gateSeconds = 0.25;
-        std::array<double, chorusBufferSize> chorusLeft {};
-        std::array<double, chorusBufferSize> chorusRight {};
+        std::array<float, chorusBufferSize> chorusLeft {};
+        std::array<float, chorusBufferSize> chorusRight {};
         int chorusIndex = 0;
         double crushHoldLeft = 0.0;
         double crushHoldRight = 0.0;

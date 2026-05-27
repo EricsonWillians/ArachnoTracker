@@ -10,14 +10,24 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#include <condition_variable>
 
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/Xutil.h>
+
+#ifndef ARACHNO_HAS_ALSA
+#define ARACHNO_HAS_ALSA 0
+#endif
+
+#if ARACHNO_HAS_ALSA
+#include <alsa/asoundlib.h>
+#endif
 
 #include "AppActions.h"
 #include "PatchIO.h"
@@ -155,6 +165,14 @@ struct SynthParamDef {
     double step = 0.01;
 };
 
+enum class AudioPerformanceMode {
+    Auto,
+    Live,
+    Balanced,
+    Heavy,
+    Custom
+};
+
 struct SynthWindowHit {
     UiRect rect;
     std::string kind;
@@ -164,6 +182,29 @@ struct SynthWindowHit {
     double delta = 0.0;
     double value = 0.0;
 };
+
+struct AudioTuningDialogHit {
+    UiRect rect;
+    std::string role;
+    AudioPerformanceMode mode = AudioPerformanceMode::Auto;
+    int delta = 0;
+};
+
+const char* audioPerformanceModeLabel(AudioPerformanceMode mode) {
+    switch (mode) {
+        case AudioPerformanceMode::Auto:
+            return "AUTO";
+        case AudioPerformanceMode::Live:
+            return "LIVE";
+        case AudioPerformanceMode::Balanced:
+            return "BAL";
+        case AudioPerformanceMode::Heavy:
+            return "HEAVY";
+        case AudioPerformanceMode::Custom:
+            return "CUSTOM";
+    }
+    return "AUTO";
+}
 
 } // namespace
 
@@ -330,6 +371,8 @@ int runGuiWindow(
     std::vector<OrderSlotHit> orderSlotHits;
     std::vector<std::pair<UiRect, std::string>> fileButtons;
     std::vector<std::pair<UiRect, GuiThemeMode>> themeButtons;
+    std::vector<std::pair<UiRect, AudioPerformanceMode>> audioPerformanceButtons;
+    std::vector<AudioTuningDialogHit> audioTuningDialogHits;
     std::vector<std::pair<UiRect, int>> octaveHitTargets;
     std::vector<PianoKeyHit> pianoKeyHits;
     std::vector<TrackMetadataHit> trackMetadataHits;
@@ -362,7 +405,24 @@ int runGuiWindow(
     int keyboardSelectionAnchorRow = 0;
     int keyboardSelectionAnchorTrack = 0;
     auto manualScrollLockUntil = std::chrono::steady_clock::time_point {};
+#if ARACHNO_HAS_ALSA
+    snd_pcm_t* audioPcm = nullptr;
+    bool audioPcmUsingFloat = false;
+    std::thread audioAlsaWriterThread;
+    std::mutex audioAlsaMutex;
+    std::condition_variable audioAlsaCv;
+    std::vector<float> audioAlsaQueue;
+    std::size_t audioAlsaQueueCapacity = 0;
+    std::size_t audioAlsaQueueRead = 0;
+    std::size_t audioAlsaQueueSize = 0;
+    bool audioAlsaThreadRunning = false;
+    bool audioAlsaThreadStop = false;
+    bool audioAlsaHealthy = true;
+    std::size_t audioAlsaStartThresholdSamples = 0;
+    std::size_t audioAlsaChunkSamples = 0;
+#endif
     FILE* audioPipe = nullptr;
+    bool audioOutputUsesAlsa = false;
     bool audioPipeUsingFloat = false;
     bool previousAudioStreamActive = false;
     std::vector<float> audioLeft;
@@ -370,6 +430,13 @@ int runGuiWindow(
     std::vector<float> audioInterleavedFloat;
     std::vector<short> audioInterleavedS16;
     std::vector<char> audioPipeBuffer;
+    int audioFrameMin = 64;
+    int audioFrameMax = 1024;
+    int audioLoadClass = 0;
+    AudioPerformanceMode audioPerformanceMode = AudioPerformanceMode::Auto;
+    int audioCustomLevel = 0;
+    auto lastAudioTuning = std::chrono::steady_clock::time_point {};
+    bool audioTuningDialogActive = false;
     int instrumentListStart = 0;
     int instrumentListVisibleRows = 8;
     int sidebarScrollOffset = 0;
@@ -391,6 +458,7 @@ int runGuiWindow(
     std::vector<FileBrowserEntry> fileBrowserEntries;
     std::vector<FileBrowserHit> fileBrowserHits;
     UiRect fileBrowserListRect;
+    UiRect audioTuningDialogRect;
     int fileBrowserScroll = 0;
     int fileBrowserSelected = -1;
     UiRect synthInlinePromptAcceptButton;
@@ -476,18 +544,383 @@ int runGuiWindow(
         }
     };
 
-    auto closeAudioPipe = [&]() {
+#if ARACHNO_HAS_ALSA
+    auto resetAlsaQueue = [&](int sampleRate) {
+        audioAlsaQueueRead = 0;
+        audioAlsaQueueSize = 0;
+        const int queueFrames = std::max(2048, sampleRate / 3);
+        audioAlsaQueueCapacity = static_cast<std::size_t>(queueFrames) * 2;
+        audioAlsaQueue.assign(audioAlsaQueueCapacity, 0.0f);
+        audioAlsaStartThresholdSamples = static_cast<std::size_t>(std::clamp(sampleRate / 150, 96, 768)) * 2;
+        audioAlsaChunkSamples = static_cast<std::size_t>(std::clamp(sampleRate / 300, 64, 512)) * 2;
+    };
+
+    auto tuneAlsaQueueForLoad = [&](int sampleRate, int loadClass) {
+        if (!audioAlsaThreadRunning || audioAlsaQueueCapacity == 0) {
+            return;
+        }
+        const int startFrames = loadClass <= 0
+            ? 192
+            : (loadClass == 1 ? 512 : 1280);
+        const int chunkFrames = loadClass <= 0
+            ? 128
+            : (loadClass == 1 ? 256 : 768);
+        const std::size_t desiredStartSamples = static_cast<std::size_t>(std::clamp(startFrames, 64, 2048)) * 2;
+        const std::size_t desiredChunkSamples = static_cast<std::size_t>(std::clamp(chunkFrames, 32, 1024)) * 2;
+        std::lock_guard<std::mutex> lock(audioAlsaMutex);
+        audioAlsaStartThresholdSamples = std::min(desiredStartSamples, audioAlsaQueueCapacity);
+        audioAlsaChunkSamples = std::min(desiredChunkSamples, audioAlsaQueueCapacity);
+        if (audioAlsaChunkSamples < 2) {
+            audioAlsaChunkSamples = 2;
+        }
+        if (audioAlsaStartThresholdSamples < 2) {
+            audioAlsaStartThresholdSamples = 2;
+        }
+        (void)sampleRate;
+    };
+
+    auto enqueueAlsaFrames = [&](const float* left, const float* right, int frames) -> bool {
+        if (!audioOutputUsesAlsa || !audioAlsaThreadRunning || !audioAlsaHealthy || frames <= 0) {
+            return false;
+        }
+        const std::size_t required = static_cast<std::size_t>(frames) * 2;
+        if (required == 0 || required > audioAlsaQueueCapacity) {
+            return false;
+        }
+
+        std::unique_lock<std::mutex> lock(audioAlsaMutex);
+        if (audioAlsaThreadStop || !audioAlsaHealthy) {
+            return false;
+        }
+        if (audioAlsaQueueSize + required > audioAlsaQueueCapacity) {
+            const std::size_t overflow = (audioAlsaQueueSize + required) - audioAlsaQueueCapacity;
+            audioAlsaQueueRead = (audioAlsaQueueRead + overflow) % audioAlsaQueueCapacity;
+            audioAlsaQueueSize -= overflow;
+        }
+        std::size_t writeIndex = (audioAlsaQueueRead + audioAlsaQueueSize) % audioAlsaQueueCapacity;
+        for (int index = 0; index < frames; ++index) {
+            audioAlsaQueue[writeIndex] = left[static_cast<std::size_t>(index)];
+            writeIndex = (writeIndex + 1) % audioAlsaQueueCapacity;
+            audioAlsaQueue[writeIndex] = right[static_cast<std::size_t>(index)];
+            writeIndex = (writeIndex + 1) % audioAlsaQueueCapacity;
+        }
+        audioAlsaQueueSize += required;
+        lock.unlock();
+        audioAlsaCv.notify_one();
+        return true;
+    };
+
+    auto startAlsaWriterThread = [&](int sampleRate) {
+        if (audioPcm == nullptr) {
+            return false;
+        }
+        resetAlsaQueue(sampleRate);
+        audioAlsaThreadStop = false;
+        audioAlsaHealthy = true;
+        audioAlsaThreadRunning = true;
+        audioAlsaWriterThread = std::thread([&]() {
+            std::vector<float> chunkFloat;
+            std::vector<short> chunkS16;
+            constexpr std::size_t maxChunkSamples = 4096;
+            chunkFloat.reserve(maxChunkSamples);
+            chunkS16.reserve(maxChunkSamples);
+            bool primed = false;
+
+            auto writeFramesToPcm = [&](const void* data, int frames) -> bool {
+                int offset = 0;
+                while (offset < frames) {
+                    const snd_pcm_sframes_t written = snd_pcm_writei(
+                        audioPcm,
+                        audioPcmUsingFloat
+                            ? static_cast<const void*>(
+                                  static_cast<const float*>(data) + static_cast<std::size_t>(offset) * 2)
+                            : static_cast<const void*>(
+                                  static_cast<const short*>(data) + static_cast<std::size_t>(offset) * 2),
+                        static_cast<snd_pcm_uframes_t>(frames - offset));
+                    if (written > 0) {
+                        offset += static_cast<int>(written);
+                        continue;
+                    }
+                    if (written == -EAGAIN) {
+                        (void)snd_pcm_wait(audioPcm, 5);
+                        continue;
+                    }
+                    if (written == -EPIPE || written == -ESTRPIPE) {
+                        if (snd_pcm_prepare(audioPcm) < 0) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    return false;
+                }
+                return true;
+            };
+
+            while (true) {
+                {
+                    std::unique_lock<std::mutex> lock(audioAlsaMutex);
+                    const std::size_t startThreshold = std::max<std::size_t>(2, audioAlsaStartThresholdSamples);
+                    audioAlsaCv.wait(lock, [&]() {
+                        return audioAlsaThreadStop
+                            || audioAlsaQueueSize >= (primed ? 2 : startThreshold);
+                    });
+                    if (audioAlsaThreadStop && audioAlsaQueueSize < 2) {
+                        break;
+                    }
+                    primed = true;
+                    const std::size_t requestedChunk = std::max<std::size_t>(2, audioAlsaChunkSamples);
+                    const std::size_t toCopy = std::min(
+                        maxChunkSamples,
+                        std::max<std::size_t>(2, std::min(requestedChunk, audioAlsaQueueSize - (audioAlsaQueueSize % 2))));
+                    chunkFloat.resize(toCopy);
+                    for (std::size_t sample = 0; sample < toCopy; ++sample) {
+                        chunkFloat[sample] = audioAlsaQueue[audioAlsaQueueRead];
+                        audioAlsaQueueRead = (audioAlsaQueueRead + 1) % audioAlsaQueueCapacity;
+                    }
+                    audioAlsaQueueSize -= toCopy;
+                    if (audioAlsaQueueSize < (startThreshold / 3)) {
+                        primed = false;
+                    }
+                }
+
+                const int frames = static_cast<int>(chunkFloat.size() / 2);
+                if (frames <= 0) {
+                    continue;
+                }
+                if (audioPcmUsingFloat) {
+                    if (!writeFramesToPcm(chunkFloat.data(), frames)) {
+                        std::lock_guard<std::mutex> lock(audioAlsaMutex);
+                        audioAlsaHealthy = false;
+                        break;
+                    }
+                } else {
+                    chunkS16.resize(chunkFloat.size());
+                    for (std::size_t index = 0; index < chunkFloat.size(); ++index) {
+                        const float clamped = std::clamp(chunkFloat[index], -1.0f, 1.0f);
+                        chunkS16[index] = static_cast<short>(std::lround(clamped * 32767.0f));
+                    }
+                    if (!writeFramesToPcm(chunkS16.data(), frames)) {
+                        std::lock_guard<std::mutex> lock(audioAlsaMutex);
+                        audioAlsaHealthy = false;
+                        break;
+                    }
+                }
+            }
+        });
+        return true;
+    };
+#endif
+
+    auto audibleTrackCount = [&]() {
+        const Song& song = session.song();
+        bool soloActive = false;
+        for (const Track& track : song.tracks) {
+            if (track.solo) {
+                soloActive = true;
+                break;
+            }
+        }
+        int count = 0;
+        for (const Track& track : song.tracks) {
+            if (track.muted) {
+                continue;
+            }
+            if (soloActive && !track.solo) {
+                continue;
+            }
+            ++count;
+        }
+        return std::max(1, count);
+    };
+
+    auto tuneRealtimeAudioForLoad = [&](int sampleRate) {
+        const int tracks = audibleTrackCount();
+        int loadClass = 0;
+        int frameMin = 96;
+        int frameMax = 1024;
+        if (audioPerformanceMode == AudioPerformanceMode::Auto) {
+            if (tracks > 28) {
+                loadClass = 2;
+            } else if (tracks > 12) {
+                loadClass = 1;
+            }
+            if (loadClass <= 0) {
+                frameMin = 96;
+                frameMax = 1024;
+            } else if (loadClass == 1) {
+                frameMin = 256;
+                frameMax = 2048;
+            } else {
+                frameMin = 536;
+                frameMax = 3216;
+            }
+        } else if (audioPerformanceMode == AudioPerformanceMode::Live) {
+            loadClass = 0;
+            frameMin = 64;
+            frameMax = 512;
+        } else if (audioPerformanceMode == AudioPerformanceMode::Balanced) {
+            loadClass = 1;
+            frameMin = 256;
+            frameMax = 2048;
+        } else if (audioPerformanceMode == AudioPerformanceMode::Heavy) {
+            loadClass = 2;
+            frameMin = 536;
+            frameMax = 3216;
+        } else {
+            const int level = std::clamp(audioCustomLevel, -24, 4096);
+            if (level < 0) {
+                frameMin = std::max(16, 64 + (level * 2));
+                frameMax = std::clamp(frameMin * 4, 96, 768);
+                loadClass = 0;
+            } else if (level <= 128) {
+                frameMin = 64 + (level * 2);
+                frameMax = std::clamp(frameMin * 6, 256, 4096);
+                loadClass = level <= 48 ? 0 : 1;
+            } else if (level <= 1024) {
+                frameMin = 320 + ((level - 128) * 3);
+                frameMax = std::clamp(frameMin * 6, 1024, 12288);
+                loadClass = level <= 320 ? 1 : 2;
+            } else {
+                frameMin = 3008 + ((level - 1024) * 4);
+                frameMax = std::clamp(frameMin * 6, 2048, 32768);
+                loadClass = 2;
+            }
+        }
+        if (loadClass == audioLoadClass
+            && frameMin == audioFrameMin
+            && frameMax == audioFrameMax
+            && std::chrono::steady_clock::now() - lastAudioTuning < std::chrono::milliseconds(180)) {
+            return;
+        }
+        audioLoadClass = loadClass;
+        audioFrameMin = frameMin;
+        audioFrameMax = frameMax;
+        lastAudioTuning = std::chrono::steady_clock::now();
+#if ARACHNO_HAS_ALSA
+        if (audioOutputUsesAlsa && audioPcm != nullptr) {
+            tuneAlsaQueueForLoad(sampleRate, audioLoadClass);
+            audioAlsaCv.notify_one();
+        }
+#else
+        (void)sampleRate;
+#endif
+    };
+
+    auto setAudioPerformanceMode = [&](AudioPerformanceMode mode, int sampleRate) {
+        if (audioPerformanceMode == mode) {
+            if (mode == AudioPerformanceMode::Custom) {
+                tuneRealtimeAudioForLoad(sampleRate);
+            }
+            return;
+        }
+        audioPerformanceMode = mode;
+        audioLoadClass = -1;
+        lastAudioTuning = std::chrono::steady_clock::time_point {};
+        tuneRealtimeAudioForLoad(sampleRate);
+    };
+
+    auto adjustAudioCustomLevel = [&](int delta, int sampleRate) {
+        if (delta == 0) {
+            return;
+        }
+        const int previous = audioCustomLevel;
+        audioCustomLevel = std::clamp(audioCustomLevel + delta, -24, 4096);
+        if (audioCustomLevel == previous && audioPerformanceMode == AudioPerformanceMode::Custom) {
+            return;
+        }
+        audioPerformanceMode = AudioPerformanceMode::Custom;
+        audioLoadClass = -1;
+        lastAudioTuning = std::chrono::steady_clock::time_point {};
+        tuneRealtimeAudioForLoad(sampleRate);
+    };
+
+    auto closeAudioOutput = [&]() {
+#if ARACHNO_HAS_ALSA
+        {
+            std::lock_guard<std::mutex> lock(audioAlsaMutex);
+            audioAlsaThreadStop = true;
+        }
+        audioAlsaCv.notify_all();
+        if (audioAlsaWriterThread.joinable()) {
+            audioAlsaWriterThread.join();
+        }
+        audioAlsaThreadRunning = false;
+        audioAlsaThreadStop = false;
+        audioAlsaQueue.clear();
+        audioAlsaQueueCapacity = 0;
+        audioAlsaQueueRead = 0;
+        audioAlsaQueueSize = 0;
+        audioAlsaHealthy = true;
+        if (audioPcm != nullptr) {
+            snd_pcm_drop(audioPcm);
+            snd_pcm_close(audioPcm);
+            audioPcm = nullptr;
+        }
+#endif
         if (audioPipe != nullptr) {
             ::pclose(audioPipe);
             audioPipe = nullptr;
         }
+        audioOutputUsesAlsa = false;
     };
 
-    auto openAudioPipe = [&](int sampleRate) -> bool {
-        closeAudioPipe();
+    auto openAudioOutput = [&](int sampleRate) -> bool {
+        closeAudioOutput();
         if (sampleRate <= 0) {
             return false;
         }
+        std::string forcedOutput;
+        if (const char* env = std::getenv("ARACHNO_AUDIO_OUTPUT"); env != nullptr) {
+            forcedOutput = env;
+            std::transform(forcedOutput.begin(), forcedOutput.end(), forcedOutput.begin(), [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+        }
+        const bool forceAplay = forcedOutput == "aplay";
+        const bool forceAlsa = forcedOutput == "alsa";
+
+#if ARACHNO_HAS_ALSA
+        auto tryOpenAlsa = [&](bool useFloat) -> bool {
+            snd_pcm_t* pcm = nullptr;
+            const int openResult = snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
+            if (openResult < 0 || pcm == nullptr) {
+                return false;
+            }
+            snd_pcm_nonblock(pcm, 0);
+            const snd_pcm_format_t format = useFloat ? SND_PCM_FORMAT_FLOAT_LE : SND_PCM_FORMAT_S16_LE;
+            constexpr unsigned int latencyUs = 30000;
+            const int paramResult = snd_pcm_set_params(
+                pcm,
+                format,
+                SND_PCM_ACCESS_RW_INTERLEAVED,
+                2,
+                static_cast<unsigned int>(sampleRate),
+                1,
+                latencyUs);
+            if (paramResult < 0) {
+                snd_pcm_close(pcm);
+                return false;
+            }
+            if (snd_pcm_prepare(pcm) < 0) {
+                snd_pcm_close(pcm);
+                return false;
+            }
+            audioPcm = pcm;
+            audioPcmUsingFloat = useFloat;
+            audioOutputUsesAlsa = true;
+            if (!startAlsaWriterThread(sampleRate)) {
+                snd_pcm_close(pcm);
+                audioPcm = nullptr;
+                audioOutputUsesAlsa = false;
+                return false;
+            }
+            return true;
+        };
+        auto tryAlsaPreferred = [&]() {
+            // Prefer S16 for broad device/plugin compatibility; float is fallback.
+            return tryOpenAlsa(false) || tryOpenAlsa(true);
+        };
+#endif
 
         auto configureLowLatencyPipe = [&]() {
             if (audioPipe != nullptr) {
@@ -499,57 +932,93 @@ int runGuiWindow(
         constexpr int liveBufferMicros = 30000;
         constexpr int livePeriodMicros = 5000;
 
-        {
-            std::ostringstream cmd;
-            cmd
-                << "aplay -q -t raw -f FLOAT_LE -c 2 -r " << sampleRate
-                << " -B " << liveBufferMicros
-                << " -F " << livePeriodMicros;
-            audioPipe = ::popen(cmd.str().c_str(), "w");
-            if (audioPipe != nullptr) {
-                configureLowLatencyPipe();
-                audioPipeUsingFloat = true;
-                return true;
+        auto tryAplayPreferred = [&]() {
+            {
+                std::ostringstream cmd;
+                cmd
+                    << "aplay -q -t raw -f FLOAT_LE -c 2 -r " << sampleRate
+                    << " -B " << liveBufferMicros
+                    << " -F " << livePeriodMicros;
+                audioPipe = ::popen(cmd.str().c_str(), "w");
+                if (audioPipe != nullptr) {
+                    configureLowLatencyPipe();
+                    audioPipeUsingFloat = true;
+                    return true;
+                }
             }
-        }
-        {
-            std::ostringstream cmd;
-            cmd
-                << "aplay -q -t raw -f S16_LE -c 2 -r " << sampleRate
-                << " -B " << liveBufferMicros
-                << " -F " << livePeriodMicros;
-            audioPipe = ::popen(cmd.str().c_str(), "w");
-            if (audioPipe != nullptr) {
-                configureLowLatencyPipe();
-                audioPipeUsingFloat = false;
-                return true;
+            {
+                std::ostringstream cmd;
+                cmd
+                    << "aplay -q -t raw -f S16_LE -c 2 -r " << sampleRate
+                    << " -B " << liveBufferMicros
+                    << " -F " << livePeriodMicros;
+                audioPipe = ::popen(cmd.str().c_str(), "w");
+                if (audioPipe != nullptr) {
+                    configureLowLatencyPipe();
+                    audioPipeUsingFloat = false;
+                    return true;
+                }
             }
-        }
-        {
-            std::ostringstream cmd;
-            cmd << "aplay -q -t raw -f FLOAT_LE -c 2 -r " << sampleRate;
-            audioPipe = ::popen(cmd.str().c_str(), "w");
-            if (audioPipe != nullptr) {
-                configureLowLatencyPipe();
-                audioPipeUsingFloat = true;
-                return true;
+            {
+                std::ostringstream cmd;
+                cmd << "aplay -q -t raw -f FLOAT_LE -c 2 -r " << sampleRate;
+                audioPipe = ::popen(cmd.str().c_str(), "w");
+                if (audioPipe != nullptr) {
+                    configureLowLatencyPipe();
+                    audioPipeUsingFloat = true;
+                    return true;
+                }
             }
-        }
-        {
-            std::ostringstream cmd;
-            cmd << "aplay -q -t raw -f S16_LE -c 2 -r " << sampleRate;
-            audioPipe = ::popen(cmd.str().c_str(), "w");
-            if (audioPipe != nullptr) {
-                configureLowLatencyPipe();
-                audioPipeUsingFloat = false;
-                return true;
+            {
+                std::ostringstream cmd;
+                cmd << "aplay -q -t raw -f S16_LE -c 2 -r " << sampleRate;
+                audioPipe = ::popen(cmd.str().c_str(), "w");
+                if (audioPipe != nullptr) {
+                    configureLowLatencyPipe();
+                    audioPipeUsingFloat = false;
+                    return true;
+                }
             }
+            return false;
+        };
+
+        if (forceAlsa) {
+#if ARACHNO_HAS_ALSA
+            return tryAlsaPreferred();
+#else
+            return false;
+#endif
         }
+        if (forceAplay) {
+            return tryAplayPreferred();
+        }
+
+        // Auto mode: prefer the established aplay path first, ALSA direct second.
+        if (tryAplayPreferred()) {
+            return true;
+        }
+#if ARACHNO_HAS_ALSA
+        if (tryAlsaPreferred()) {
+            return true;
+        }
+#endif
         return false;
     };
 
-    auto writeAudioPipe = [&](const float* left, const float* right, int frames) -> bool {
-        if (audioPipe == nullptr || frames <= 0) {
+    auto writeAudioOutput = [&](const float* left, const float* right, int frames) -> bool {
+        if (frames <= 0) {
+            return false;
+        }
+#if ARACHNO_HAS_ALSA
+        if (audioOutputUsesAlsa && audioPcm != nullptr) {
+            if (enqueueAlsaFrames(left, right, frames)) {
+                return true;
+            }
+            closeAudioOutput();
+            return false;
+        }
+#endif
+        if (audioPipe == nullptr) {
             return false;
         }
         if (audioPipeUsingFloat) {
@@ -567,7 +1036,7 @@ int runGuiWindow(
                 sampleCount,
                 audioPipe);
             if (written != sampleCount) {
-                closeAudioPipe();
+                closeAudioOutput();
                 return false;
             }
         } else {
@@ -587,7 +1056,7 @@ int runGuiWindow(
                 sampleCount,
                 audioPipe);
             if (written != sampleCount) {
-                closeAudioPipe();
+                closeAudioOutput();
                 return false;
             }
         }
@@ -1458,11 +1927,17 @@ int runGuiWindow(
             setSynthWindowVisible(!synthWindowVisible);
             return;
         }
+        if (actionId == "audio.tuning.toggle") {
+            audioTuningDialogActive = !audioTuningDialogActive;
+            return;
+        }
         if (actionId == "project.new") {
+            audioTuningDialogActive = false;
             runLifecycleAction(makeActionRequest("project.new"));
             return;
         }
         if (actionId == "project.save") {
+            audioTuningDialogActive = false;
             if (snap.hasProjectPath) {
                 runAction(makeActionRequest("project.save"));
             } else {
@@ -1475,6 +1950,7 @@ int runGuiWindow(
             return;
         }
         if (actionId == "project.open") {
+            audioTuningDialogActive = false;
             beginInlinePrompt(
                 InlinePromptKind::OpenProjectPath,
                 "Load project or MIDI",
@@ -1483,6 +1959,7 @@ int runGuiWindow(
             return;
         }
         if (actionId == "export.mixdown") {
+            audioTuningDialogActive = false;
             beginInlinePrompt(
                 InlinePromptKind::ExportMixdownPath,
                 "Export audio or MIDI",
@@ -1491,6 +1968,7 @@ int runGuiWindow(
             return;
         }
         if (actionId == "import.midi") {
+            audioTuningDialogActive = false;
             beginInlinePrompt(
                 InlinePromptKind::ImportMidiPath,
                 "Import MIDI file",
@@ -1859,6 +2337,7 @@ int runGuiWindow(
 
     auto openInstrumentBrowser = [&]() {
         const AppSessionSnapshot snap = activeSnapshot();
+        audioTuningDialogActive = false;
         instrumentBrowserActive = true;
         instrumentBrowserQuery.clear();
         instrumentBrowserScroll = 0;
@@ -2490,6 +2969,8 @@ int runGuiWindow(
         orderSlotHits.clear();
         fileButtons.clear();
         themeButtons.clear();
+        audioPerformanceButtons.clear();
+        audioTuningDialogHits.clear();
         octaveHitTargets.clear();
         pianoKeyHits.clear();
         trackMetadataHits.clear();
@@ -2517,6 +2998,7 @@ int runGuiWindow(
         instrumentBrowserCancelButton = UiRect {};
         sidebarViewport = UiRect {};
         fileBrowserListRect = UiRect {};
+        audioTuningDialogRect = UiRect {};
 
         const int lineHeight = 17;
         const int margin = 12;
@@ -2643,6 +3125,7 @@ int runGuiWindow(
             {"NEW", "N", "project.new"},
             {"LOAD", "L", "project.open"},
             {"SAVE", "S", "project.save"},
+            {"TUNE", "TN", "audio.tuning.toggle"},
             {"PATCH", "PT", "synth.window.toggle"},
             {"EXPORT", "X", "export.mixdown"}};
         std::vector<ToolbarItem> transportItems {
@@ -2715,7 +3198,9 @@ int runGuiWindow(
                 const std::string& label = compact ? item.compactLabel : item.label;
                 const int buttonW = std::max(minWidth, textWidth(label) + padding);
                 const UiRect rect {x, toolbarY + 1, buttonW, toolbarH};
-                drawToolbarButton(rect, label, false);
+                const bool active = (item.actionId == "synth.window.toggle" && synthWindowVisible)
+                    || (item.actionId == "audio.tuning.toggle" && audioTuningDialogActive);
+                drawToolbarButton(rect, label, active);
                 fileButtons.push_back({rect, item.actionId});
                 x += buttonW + gap;
             }
@@ -2750,11 +3235,13 @@ int runGuiWindow(
                 {"NEW", "N", "project.new"},
                 {"LOAD", "L", "project.open"},
                 {"SAVE", "S", "project.save"},
+                {"TUNE", "TN", "audio.tuning.toggle"},
                 {"PATCH", "PT", "synth.window.toggle"}};
             if (!drawLeftGroup(compactFileItems, true, 10, 36, 4)) {
                 std::vector<ToolbarItem> tinyFileItems {
                     {"NEW", "N", "project.new"},
                     {"SAVE", "S", "project.save"},
+                    {"TUNE", "TN", "audio.tuning.toggle"},
                     {"PATCH", "PT", "synth.window.toggle"}};
                 (void)drawLeftGroup(tinyFileItems, true, 10, 34, 3);
             }
@@ -2766,15 +3253,103 @@ int runGuiWindow(
             drawText(subtitleX, toolbarY + 16, "Tracker Workbench", colorMutedText);
         }
 
+        int audioPerfReservedLeft = windowWidth - margin - 8;
+        {
+            const int perfY = margin + 40;
+            const int perfH = 18;
+            const int perfGap = 3;
+            const std::array<AudioPerformanceMode, 5> perfModes {
+                AudioPerformanceMode::Auto,
+                AudioPerformanceMode::Live,
+                AudioPerformanceMode::Balanced,
+                AudioPerformanceMode::Heavy,
+                AudioPerformanceMode::Custom};
+            int totalButtonsWidth = 0;
+            std::array<int, 5> buttonWidths {};
+            for (std::size_t index = 0; index < perfModes.size(); ++index) {
+                const std::string label = audioPerformanceModeLabel(perfModes[index]);
+                buttonWidths[index] = std::max(36, textWidth(label) + 12);
+                totalButtonsWidth += buttonWidths[index];
+                if (index + 1 < perfModes.size()) {
+                    totalButtonsWidth += perfGap;
+                }
+            }
+            const int tuneWidth = std::max(52, textWidth("TUNE") + 12);
+            totalButtonsWidth += perfGap + tuneWidth;
+            const int perfLabelWidth = textWidth("AUDIO");
+            const int perfTotalWidth = perfLabelWidth + 8 + totalButtonsWidth;
+            const int perfStartX = windowWidth - margin - 8 - perfTotalWidth;
+            if (perfStartX > margin + 300) {
+                std::string telemetryText;
+                unsigned long telemetryColor = colorMutedText;
+                {
+                    std::ostringstream telemetry;
+                    const char* outputBackend = audioOutputUsesAlsa
+                        ? "ALSA"
+                        : (audioPipe != nullptr ? "APLAY" : "OFF");
+                    telemetry << outputBackend << " " << audioFrameMin << "-" << audioFrameMax;
+                    if (audioPerformanceMode == AudioPerformanceMode::Custom) {
+                        telemetry << " lvl " << audioCustomLevel;
+                    }
+#if ARACHNO_HAS_ALSA
+                    if (audioOutputUsesAlsa && audioAlsaQueueCapacity > 0) {
+                        std::size_t queued = 0;
+                        std::size_t capacity = 0;
+                        {
+                            std::lock_guard<std::mutex> lock(audioAlsaMutex);
+                            queued = audioAlsaQueueSize;
+                            capacity = audioAlsaQueueCapacity;
+                        }
+                        if (capacity > 0) {
+                            const int queuePct = static_cast<int>((queued * 100) / capacity);
+                            telemetry << " q" << std::clamp(queuePct, 0, 100) << "%";
+                            if (queuePct > 85) {
+                                telemetryColor = colorCursor;
+                            } else if (queuePct > 65) {
+                                telemetryColor = colorText;
+                            } else {
+                                telemetryColor = colorMutedText;
+                            }
+                        }
+                    }
+#endif
+                    telemetryText = telemetry.str();
+                    if (!audioOutputUsesAlsa && audioPipe == nullptr) {
+                        telemetryColor = colorMutedText;
+                    }
+                }
+                drawText(perfStartX, perfY + 14, "AUDIO", colorMutedText);
+                int x = perfStartX + perfLabelWidth + 8;
+                for (std::size_t index = 0; index < perfModes.size(); ++index) {
+                    const AudioPerformanceMode mode = perfModes[index];
+                    const UiRect rect {x, perfY, buttonWidths[index], perfH};
+                    const std::string label = audioPerformanceModeLabel(mode);
+                    drawToolbarButton(rect, label, audioPerformanceMode == mode);
+                    audioPerformanceButtons.push_back({rect, mode});
+                    x += buttonWidths[index] + perfGap;
+                }
+                const UiRect tuneRect {x, perfY, tuneWidth, perfH};
+                drawToolbarButton(tuneRect, "TUNE", audioTuningDialogActive);
+                fileButtons.push_back({tuneRect, "audio.tuning.toggle"});
+                const int telemetryY = perfY + perfH + 13;
+                const int telemetryWidth = perfTotalWidth;
+                drawText(perfStartX, telemetryY, fitText(telemetryText, telemetryWidth), telemetryColor);
+                audioPerfReservedLeft = perfStartX - 10;
+            }
+        }
+
+        const int hintMaxWidth = std::max(160, audioPerfReservedLeft - (margin + 10));
+        const std::string hintLine1 = "Enter inserts selected note | Ctrl+0..8 octave | Arrows move | Shift+Arrows select | Space pattern play/stop";
         drawText(
             margin + 10,
             margin + 54,
-            "Enter inserts selected note | Ctrl+0..8 octave | Arrows move | Shift+Arrows select | Space pattern play/stop",
+            fitText(hintLine1, hintMaxWidth),
             colorMutedText);
+        const std::string hintLine2 = "Transport: F5 song F6 pattern | F7 mode | Ctrl+F7 tuning | Wheel in tuning = infinite range";
         drawText(
             margin + 10,
             margin + 71,
-            "Transport: F5 song F6 pattern | Shift+Wheel tracks | Ctrl+M import MIDI | Ctrl+Shift+M split/merge lanes",
+            fitText(hintLine2, hintMaxWidth),
             colorMutedText);
 
         {
@@ -2913,7 +3488,11 @@ int runGuiWindow(
             << "  Octave: " << armedOctave
             << "  Velocity: " << static_cast<int>(defaultVelocity * 100.0f)
             << "  Step advance: " << (stepAdvance ? "on" : "off")
-            << "  Follow playback: " << (followPlayback ? "on" : "off");
+            << "  Follow playback: " << (followPlayback ? "on" : "off")
+            << "  Audio mode: " << audioPerformanceModeLabel(audioPerformanceMode);
+        if (audioPerformanceMode == AudioPerformanceMode::Custom) {
+            trackerState << " (" << audioCustomLevel << ")";
+        }
         printLine(trackerState.str());
 
         drawFilledRect(gridLeft, gridTop, gridWidth, gridHeight, colorPanel);
@@ -3547,6 +4126,91 @@ int runGuiWindow(
             instrumentBrowserCancelButton = UiRect {modalX + 106, modalY + modalH - 34, 86, 22};
             drawButton(instrumentBrowserAcceptButton, "SELECT", false);
             drawButton(instrumentBrowserCancelButton, "CANCEL", false);
+        } else if (audioTuningDialogActive) {
+            const int modalW = std::min(windowWidth - 40, 760);
+            const int modalH = 244;
+            int modalX = 0;
+            int modalY = 0;
+            drawModalPanel(modalW, modalH, modalX, modalY);
+            audioTuningDialogRect = UiRect {modalX, modalY, modalW, modalH};
+            drawText(modalX + 12, modalY + 24, "Audio Performance Tuning", colorText);
+            drawText(
+                modalX + 12,
+                modalY + 44,
+                "Wheel or +/- controls to stretch from ultra-low latency to ultra-heavy buffering.",
+                colorMutedText);
+
+            const int modeY = modalY + 56;
+            const int modeH = 20;
+            const int modeGap = 4;
+            const std::array<AudioPerformanceMode, 5> modes {
+                AudioPerformanceMode::Auto,
+                AudioPerformanceMode::Live,
+                AudioPerformanceMode::Balanced,
+                AudioPerformanceMode::Heavy,
+                AudioPerformanceMode::Custom};
+            int modeX = modalX + 12;
+            for (AudioPerformanceMode mode : modes) {
+                const std::string label = audioPerformanceModeLabel(mode);
+                const int width = std::max(62, textWidth(label) + 14);
+                const UiRect rect {modeX, modeY, width, modeH};
+                drawToolbarButton(rect, label, audioPerformanceMode == mode);
+                AudioTuningDialogHit hit;
+                hit.rect = rect;
+                hit.role = "mode";
+                hit.mode = mode;
+                audioTuningDialogHits.push_back(hit);
+                modeX += width + modeGap;
+            }
+
+            const UiRect valueRect {modalX + 12, modalY + 84, modalW - 24, 40};
+            drawFilledRect(valueRect.x, valueRect.y, valueRect.width, valueRect.height, colorBackground);
+            drawRect(valueRect.x, valueRect.y, valueRect.width, valueRect.height, colorGridLine);
+            std::ostringstream valueLine;
+            valueLine << "Custom level " << audioCustomLevel
+                      << "  |  Frame window " << audioFrameMin << "-" << audioFrameMax;
+            drawText(valueRect.x + 8, valueRect.y + 17, fitText(valueLine.str(), valueRect.width - 12), colorText);
+            drawText(valueRect.x + 8, valueRect.y + 33, "Wheel Up = lower latency, Wheel Down = heavier buffering", colorMutedText);
+
+            const int controlsY = modalY + 134;
+            const int controlH = 22;
+            const int controlGap = 6;
+            const std::array<int, 8> deltas {-250, -50, -10, -1, 1, 10, 50, 250};
+            const std::array<const char*, 8> deltaLabels {"-250", "-50", "-10", "-1", "+1", "+10", "+50", "+250"};
+            int controlX = modalX + 12;
+            for (std::size_t index = 0; index < deltas.size(); ++index) {
+                const UiRect rect {controlX, controlsY, 58, controlH};
+                drawButton(rect, deltaLabels[index], false);
+                AudioTuningDialogHit hit;
+                hit.rect = rect;
+                hit.role = "delta";
+                hit.delta = deltas[index];
+                audioTuningDialogHits.push_back(hit);
+                controlX += rect.width + controlGap;
+            }
+            const UiRect resetRect {controlX + 8, controlsY, 72, controlH};
+            drawButton(resetRect, "RESET", false);
+            {
+                AudioTuningDialogHit hit;
+                hit.rect = resetRect;
+                hit.role = "reset";
+                audioTuningDialogHits.push_back(hit);
+            }
+
+            const UiRect closeRect {modalX + modalW - 92, modalY + modalH - 32, 80, 20};
+            drawButton(closeRect, "CLOSE", false);
+            {
+                AudioTuningDialogHit hit;
+                hit.rect = closeRect;
+                hit.role = "close";
+                audioTuningDialogHits.push_back(hit);
+            }
+
+            drawText(
+                modalX + 12,
+                modalY + modalH - 12,
+                "Ctrl+F7 opens this panel | F7 cycles preset modes",
+                colorMutedText);
         } else if (inlinePrompt.active && !(synthWindowVisible && isSynthInlinePromptKind(inlinePrompt.kind))) {
             const bool browserMode = inlinePromptUsesFileBrowser(inlinePrompt.kind);
             const int modalW = browserMode ? std::min(windowWidth - 40, 920) : std::min(windowWidth - 40, 700);
@@ -4547,6 +5211,44 @@ int runGuiWindow(
                     needsRedraw = true;
                     continue;
                 }
+                if (audioTuningDialogActive) {
+                    const PlaybackSnapshot playback = session.playback().snapshot();
+                    if (event.xbutton.button == Button1) {
+                        bool handled = false;
+                        for (const AudioTuningDialogHit& hit : audioTuningDialogHits) {
+                            if (!hit.rect.contains(mx, my)) {
+                                continue;
+                            }
+                            if (hit.role == "close") {
+                                audioTuningDialogActive = false;
+                            } else if (hit.role == "mode") {
+                                setAudioPerformanceMode(hit.mode, playback.sampleRate);
+                            } else if (hit.role == "delta") {
+                                adjustAudioCustomLevel(hit.delta, playback.sampleRate);
+                            } else if (hit.role == "reset") {
+                                audioCustomLevel = 0;
+                                setAudioPerformanceMode(AudioPerformanceMode::Custom, playback.sampleRate);
+                            }
+                            handled = true;
+                            break;
+                        }
+                        if (!handled && !audioTuningDialogRect.contains(mx, my)) {
+                            audioTuningDialogActive = false;
+                        }
+                    } else if (event.xbutton.button == Button4 || event.xbutton.button == Button5) {
+                        if (audioTuningDialogRect.contains(mx, my)) {
+                            int delta = event.xbutton.button == Button4 ? -1 : 1;
+                            if (shiftDown) {
+                                delta *= 10;
+                            } else if (ctrlDown) {
+                                delta *= 50;
+                            }
+                            adjustAudioCustomLevel(delta, playback.sampleRate);
+                        }
+                    }
+                    needsRedraw = true;
+                    continue;
+                }
                 if (inlinePrompt.active && !(synthWindowVisible && isSynthInlinePromptKind(inlinePrompt.kind))) {
                     const bool browserMode = inlinePromptUsesFileBrowser(inlinePrompt.kind);
                     bool handled = false;
@@ -4689,6 +5391,17 @@ int runGuiWindow(
                                 continue;
                             }
                             themeMode = entry.second;
+                            consumed = true;
+                            break;
+                        }
+                    }
+                    if (!consumed) {
+                        for (const auto& entry : audioPerformanceButtons) {
+                            if (!entry.first.contains(mx, my)) {
+                                continue;
+                            }
+                            const PlaybackSnapshot playback = session.playback().snapshot();
+                            setAudioPerformanceMode(entry.second, playback.sampleRate);
                             consumed = true;
                             break;
                         }
@@ -5132,6 +5845,46 @@ int runGuiWindow(
                 continue;
             }
 
+            if (audioTuningDialogActive) {
+                const PlaybackSnapshot playback = session.playback().snapshot();
+                bool consumed = false;
+                if (key == XK_Escape || keyMatches(XK_Return) || keyMatches(XK_KP_Enter)) {
+                    audioTuningDialogActive = false;
+                    consumed = true;
+                } else if (keyMatches(XK_Left) || keyMatches(XK_KP_Left) || key == XK_minus || key == XK_KP_Subtract) {
+                    adjustAudioCustomLevel(shiftDown ? -10 : -1, playback.sampleRate);
+                    consumed = true;
+                } else if (keyMatches(XK_Right) || keyMatches(XK_KP_Right) || key == XK_equal || key == XK_plus || key == XK_KP_Add) {
+                    adjustAudioCustomLevel(shiftDown ? 10 : 1, playback.sampleRate);
+                    consumed = true;
+                } else if (keyMatches(XK_Page_Up)) {
+                    adjustAudioCustomLevel(-50, playback.sampleRate);
+                    consumed = true;
+                } else if (keyMatches(XK_Page_Down)) {
+                    adjustAudioCustomLevel(50, playback.sampleRate);
+                    consumed = true;
+                } else if (ctrlDown && key == XK_F7) {
+                    setAudioPerformanceMode(AudioPerformanceMode::Custom, playback.sampleRate);
+                    consumed = true;
+                } else {
+                    const int digit = resolvedDigit();
+                    if (digit >= 1 && digit <= 5) {
+                        const std::array<AudioPerformanceMode, 5> modes {
+                            AudioPerformanceMode::Auto,
+                            AudioPerformanceMode::Live,
+                            AudioPerformanceMode::Balanced,
+                            AudioPerformanceMode::Heavy,
+                            AudioPerformanceMode::Custom};
+                        setAudioPerformanceMode(modes[static_cast<std::size_t>(digit - 1)], playback.sampleRate);
+                        consumed = true;
+                    }
+                }
+                if (consumed) {
+                    needsRedraw = true;
+                    continue;
+                }
+            }
+
             if (inlinePrompt.active && !(synthWindowVisible && isSynthInlinePromptKind(inlinePrompt.kind))) {
                 const bool browserMode = inlinePromptUsesFileBrowser(inlinePrompt.kind);
                 bool consumed = false;
@@ -5369,6 +6122,41 @@ int runGuiWindow(
             }
             if (key == XK_F6) {
                 runAction(makeActionRequest("playback.play_pattern"));
+                needsRedraw = true;
+                continue;
+            }
+            if (key == XK_F7) {
+                const PlaybackSnapshot playback = session.playback().snapshot();
+                if (ctrlDown) {
+                    audioTuningDialogActive = !audioTuningDialogActive;
+                    if (audioTuningDialogActive) {
+                        setAudioPerformanceMode(AudioPerformanceMode::Custom, playback.sampleRate);
+                    }
+                    needsRedraw = true;
+                    continue;
+                }
+                const std::array<AudioPerformanceMode, 4> modes {
+                    AudioPerformanceMode::Auto,
+                    AudioPerformanceMode::Live,
+                    AudioPerformanceMode::Balanced,
+                    AudioPerformanceMode::Heavy};
+                std::size_t modeIndex = 0;
+                bool foundMode = false;
+                for (std::size_t index = 0; index < modes.size(); ++index) {
+                    if (modes[index] == audioPerformanceMode) {
+                        modeIndex = index;
+                        foundMode = true;
+                        break;
+                    }
+                }
+                if (!foundMode) {
+                    modeIndex = shiftDown ? modes.size() - 1 : 0;
+                } else if (shiftDown) {
+                    modeIndex = (modeIndex + modes.size() - 1) % modes.size();
+                } else {
+                    modeIndex = (modeIndex + 1) % modes.size();
+                }
+                setAudioPerformanceMode(modes[modeIndex], playback.sampleRate);
                 needsRedraw = true;
                 continue;
             }
@@ -5746,22 +6534,32 @@ int runGuiWindow(
         {
             const PlaybackSnapshot playback = session.playback().snapshot();
             const bool shouldStreamAudio = playback.state == TransportState::Playing || playback.previewActive;
-            if (shouldStreamAudio && !previousAudioStreamActive) {
-                if (audioPipe == nullptr && !openAudioPipe(playback.sampleRate)) {
-                    lastAction.ok = false;
-                    lastAction.actionId = "audio.output.open";
-                    lastAction.error = "failed to open live audio output (aplay)";
+            bool hasLiveOutput =
+#if ARACHNO_HAS_ALSA
+                (audioOutputUsesAlsa && audioPcm != nullptr) ||
+#endif
+                (audioPipe != nullptr);
+            if (shouldStreamAudio && (!previousAudioStreamActive || !hasLiveOutput)) {
+                if (!hasLiveOutput) {
+                    if (!openAudioOutput(playback.sampleRate)) {
+                        lastAction.ok = false;
+                        lastAction.actionId = "audio.output.open";
+                        lastAction.error = "failed to open live audio output (ALSA/aplay)";
+                    } else {
+                        hasLiveOutput = true;
+                    }
                 }
             }
             if (!shouldStreamAudio && previousAudioStreamActive) {
-                closeAudioPipe();
+                closeAudioOutput();
             }
 
             if (shouldStreamAudio) {
+                tuneRealtimeAudioForLoad(playback.sampleRate);
                 const auto nowTick = std::chrono::steady_clock::now();
                 const double elapsedSeconds = std::chrono::duration<double>(nowTick - lastPlaybackTick).count();
                 int frames = static_cast<int>(std::llround(elapsedSeconds * static_cast<double>(playback.sampleRate)));
-                frames = std::clamp(frames, 64, 2048);
+                frames = std::clamp(frames, audioFrameMin, audioFrameMax);
                 if (audioLeft.size() < static_cast<std::size_t>(frames)) {
                     audioLeft.resize(static_cast<std::size_t>(frames), 0.0f);
                     audioRight.resize(static_cast<std::size_t>(frames), 0.0f);
@@ -5781,7 +6579,7 @@ int runGuiWindow(
                 } else {
                     session.playback().render(audioLeft.data(), audioRight.data(), frames);
                 }
-                if (audioPipe != nullptr && !writeAudioPipe(audioLeft.data(), audioRight.data(), frames)) {
+                if (hasLiveOutput && !writeAudioOutput(audioLeft.data(), audioRight.data(), frames)) {
                     lastAction.ok = false;
                     lastAction.actionId = "audio.output.write";
                     lastAction.error = "live audio output stream failed";
@@ -5813,7 +6611,7 @@ int runGuiWindow(
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 
-    closeAudioPipe();
+    closeAudioOutput();
     releaseTrackerBackbuffer();
     if (uiFont != nullptr) {
         XFreeFont(display, uiFont);
