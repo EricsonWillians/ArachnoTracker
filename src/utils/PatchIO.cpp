@@ -65,6 +65,7 @@ void savePatch(const SynthPatch& patch, const std::string& path) {
         << " " << patch.fmAmount
         << " " << patch.fmRatio
         << " " << patch.fmFeedback
+        << " " << patch.fmAlgorithm
         << " " << (patch.chorusEnabled ? 1.0 : 0.0)
         << " " << patch.chorusMix
         << " " << patch.chorusRate
@@ -79,6 +80,9 @@ void savePatch(const SynthPatch& patch, const std::string& path) {
         << " " << patch.noiseTone
         << " " << patch.cutoff
         << " " << patch.resonance
+        << " " << patch.filterMode
+        << " " << patch.filterDrive
+        << " " << patch.filterKeytrack
         << " " << patch.filterEnvelopeAmount
         << " " << patch.lfoFilterDepth
         << " " << patch.lfoPanDepth
@@ -110,8 +114,30 @@ void savePatch(const SynthPatch& patch, const std::string& path) {
         << " " << patch.transientBurstDecay
         << " " << patch.transientTone
         << " " << patch.transientDecay
+        << " " << patch.analogColor
+        << " " << patch.toneTilt
         << " " << patch.gain
         << " " << patch.pan
+        << " " << patch.oscALevel
+        << " " << patch.oscBLevel
+        << " " << patch.oscCLevel
+        << " " << patch.oscDLevel
+        << " " << patch.oscADetuneCents
+        << " " << patch.oscBDetuneCents
+        << " " << patch.oscCDetuneCents
+        << " " << patch.oscDDetuneCents
+        << " " << patch.oscAPulseWidth
+        << " " << patch.oscBPulseWidth
+        << " " << patch.oscCPulseWidth
+        << " " << patch.oscDPulseWidth
+        << " " << patch.oscAPwmDepth
+        << " " << patch.oscBPwmDepth
+        << " " << patch.oscCPwmDepth
+        << " " << patch.oscDPwmDepth
+        << " " << patch.oscADrive
+        << " " << patch.oscBDrive
+        << " " << patch.oscCDrive
+        << " " << patch.oscDDrive
         << "\n";
     out << "amp"
         << " " << patch.ampEnvelope.attack
@@ -136,7 +162,7 @@ SynthPatch loadPatch(const std::string& path) {
 
     expectToken(in, "arachno_patch");
     const int version = readValue<int>(in, "patch version");
-    if (version != patchFileVersion) {
+    if (version != 1 && version != patchFileVersion) {
         throw std::runtime_error("unsupported patch version: " + std::to_string(version));
     }
 
@@ -170,7 +196,167 @@ SynthPatch loadPatch(const std::string& path) {
     while (paramsIn >> param) {
         params.push_back(param);
     }
-    if (params.size() >= 63) {
+    if (params.size() >= 89) {
+        patch.oscillatorAEnabled = params[0] >= 0.5;
+        patch.oscillatorBEnabled = params[1] >= 0.5;
+        patch.oscillatorCEnabled = params[2] >= 0.5;
+        patch.oscillatorDEnabled = params[3] >= 0.5;
+        patch.oscillatorMix = params[4];
+        patch.oscillatorCMix = params[5];
+        patch.oscillatorDMix = params[6];
+        patch.detuneCents = params[7];
+        patch.detuneCCents = params[8];
+        patch.detuneDCents = params[9];
+        patch.pulseWidth = params[10];
+        patch.pwmDepth = params[11];
+        patch.fmEnabled = params[12] >= 0.5;
+        patch.fmAmount = params[13];
+        patch.fmRatio = params[14];
+        patch.fmFeedback = params[15];
+        patch.fmAlgorithm = static_cast<int>(std::lround(params[16]));
+        patch.chorusEnabled = params[17] >= 0.5;
+        patch.chorusMix = params[18];
+        patch.chorusRate = params[19];
+        patch.chorusDepth = params[20];
+        patch.unisonVoices = static_cast<int>(std::lround(params[21]));
+        patch.unisonDetuneCents = params[22];
+        patch.stereoSpread = params[23];
+        patch.subEnabled = params[24] >= 0.5;
+        patch.subOscillator = params[25];
+        patch.noiseEnabled = params[26] >= 0.5;
+        patch.noise = params[27];
+        patch.noiseTone = params[28];
+        patch.cutoff = params[29];
+        patch.resonance = params[30];
+        patch.filterMode = static_cast<int>(std::lround(params[31]));
+        patch.filterDrive = params[32];
+        patch.filterKeytrack = params[33];
+        patch.filterEnvelopeAmount = params[34];
+        patch.lfoFilterDepth = params[35];
+        patch.lfoPanDepth = params[36];
+        patch.pitchEnvelopeSemitones = params[37];
+        patch.pitchEnvelopeDecay = params[38];
+        patch.lfoRate = params[39];
+        patch.vibratoCents = params[40];
+        patch.tremoloDepth = params[41];
+        patch.ringEnabled = params[42] >= 0.5;
+        patch.ringMod = params[43];
+        patch.hardSyncEnabled = params[44] >= 0.5;
+        patch.hardSync = params[45];
+        patch.drive = params[46];
+        patch.wavefold = params[47];
+        patch.bitCrushEnabled = params[48] >= 0.5;
+        patch.bitCrush = params[49];
+        patch.sampleRateReduction = params[50];
+        patch.combMix = params[51];
+        patch.combTime = params[52];
+        patch.combFeedback = params[53];
+        patch.highPass = params[54];
+        patch.click = params[55];
+        patch.transientShape = params[56];
+        patch.transientNoise = params[57];
+        patch.transientPitchSemitones = params[58];
+        patch.transientPitchDecay = params[59];
+        patch.transientBurstCount = static_cast<int>(std::lround(params[60]));
+        patch.transientBurstSpacing = params[61];
+        patch.transientBurstDecay = params[62];
+        patch.transientTone = params[63];
+        patch.transientDecay = params[64];
+        patch.analogColor = params[65];
+        patch.toneTilt = params[66];
+        patch.gain = params[67];
+        patch.pan = params[68];
+        patch.oscALevel = params[69];
+        patch.oscBLevel = params[70];
+        patch.oscCLevel = params[71];
+        patch.oscDLevel = params[72];
+        patch.oscADetuneCents = params[73];
+        patch.oscBDetuneCents = params[74];
+        patch.oscCDetuneCents = params[75];
+        patch.oscDDetuneCents = params[76];
+        patch.oscAPulseWidth = params[77];
+        patch.oscBPulseWidth = params[78];
+        patch.oscCPulseWidth = params[79];
+        patch.oscDPulseWidth = params[80];
+        patch.oscAPwmDepth = params[81];
+        patch.oscBPwmDepth = params[82];
+        patch.oscCPwmDepth = params[83];
+        patch.oscDPwmDepth = params[84];
+        patch.oscADrive = params[85];
+        patch.oscBDrive = params[86];
+        patch.oscCDrive = params[87];
+        patch.oscDDrive = params[88];
+    } else if (params.size() >= 69) {
+        patch.oscillatorAEnabled = params[0] >= 0.5;
+        patch.oscillatorBEnabled = params[1] >= 0.5;
+        patch.oscillatorCEnabled = params[2] >= 0.5;
+        patch.oscillatorDEnabled = params[3] >= 0.5;
+        patch.oscillatorMix = params[4];
+        patch.oscillatorCMix = params[5];
+        patch.oscillatorDMix = params[6];
+        patch.detuneCents = params[7];
+        patch.detuneCCents = params[8];
+        patch.detuneDCents = params[9];
+        patch.pulseWidth = params[10];
+        patch.pwmDepth = params[11];
+        patch.fmEnabled = params[12] >= 0.5;
+        patch.fmAmount = params[13];
+        patch.fmRatio = params[14];
+        patch.fmFeedback = params[15];
+        patch.fmAlgorithm = static_cast<int>(std::lround(params[16]));
+        patch.chorusEnabled = params[17] >= 0.5;
+        patch.chorusMix = params[18];
+        patch.chorusRate = params[19];
+        patch.chorusDepth = params[20];
+        patch.unisonVoices = static_cast<int>(std::lround(params[21]));
+        patch.unisonDetuneCents = params[22];
+        patch.stereoSpread = params[23];
+        patch.subEnabled = params[24] >= 0.5;
+        patch.subOscillator = params[25];
+        patch.noiseEnabled = params[26] >= 0.5;
+        patch.noise = params[27];
+        patch.noiseTone = params[28];
+        patch.cutoff = params[29];
+        patch.resonance = params[30];
+        patch.filterMode = static_cast<int>(std::lround(params[31]));
+        patch.filterDrive = params[32];
+        patch.filterKeytrack = params[33];
+        patch.filterEnvelopeAmount = params[34];
+        patch.lfoFilterDepth = params[35];
+        patch.lfoPanDepth = params[36];
+        patch.pitchEnvelopeSemitones = params[37];
+        patch.pitchEnvelopeDecay = params[38];
+        patch.lfoRate = params[39];
+        patch.vibratoCents = params[40];
+        patch.tremoloDepth = params[41];
+        patch.ringEnabled = params[42] >= 0.5;
+        patch.ringMod = params[43];
+        patch.hardSyncEnabled = params[44] >= 0.5;
+        patch.hardSync = params[45];
+        patch.drive = params[46];
+        patch.wavefold = params[47];
+        patch.bitCrushEnabled = params[48] >= 0.5;
+        patch.bitCrush = params[49];
+        patch.sampleRateReduction = params[50];
+        patch.combMix = params[51];
+        patch.combTime = params[52];
+        patch.combFeedback = params[53];
+        patch.highPass = params[54];
+        patch.click = params[55];
+        patch.transientShape = params[56];
+        patch.transientNoise = params[57];
+        patch.transientPitchSemitones = params[58];
+        patch.transientPitchDecay = params[59];
+        patch.transientBurstCount = static_cast<int>(std::lround(params[60]));
+        patch.transientBurstSpacing = params[61];
+        patch.transientBurstDecay = params[62];
+        patch.transientTone = params[63];
+        patch.transientDecay = params[64];
+        patch.analogColor = params[65];
+        patch.toneTilt = params[66];
+        patch.gain = params[67];
+        patch.pan = params[68];
+    } else if (params.size() >= 63) {
         patch.oscillatorAEnabled = params[0] >= 0.5;
         patch.oscillatorBEnabled = params[1] >= 0.5;
         patch.oscillatorCEnabled = params[2] >= 0.5;

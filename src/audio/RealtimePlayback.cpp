@@ -185,7 +185,7 @@ AuditionResult RealtimePlaybackSession::audition(const AuditionRequest& request)
     result.request.note.velocity = std::clamp(result.request.note.velocity, 0.0f, 1.0f);
     result.request.gateSeconds = std::max(0.01, request.gateSeconds);
     result.request.pan = std::clamp(request.pan, -1.0, 1.0);
-    synth_.noteOn(result.request.note, result.request.patch, result.request.pan, result.request.gateSeconds);
+    synth_.noteOn(result.request.note, result.request.patch, result.request.pan, result.request.gateSeconds, -1);
     result.ok = true;
     result.message = result.request.label.empty() ? "Auditioned note" : "Auditioned " + result.request.label;
     return result;
@@ -236,14 +236,35 @@ AuditionResult RealtimePlaybackSession::auditionInstrument(
         return result;
     }
     const Instrument& instrument = song_->instruments[static_cast<std::size_t>(instrumentIndex)];
-    result = auditionPatch(instrument.patch, midiNote, velocity, gateSeconds, instrument.patch.pan);
+    result.request.note = Note(
+        std::clamp(midiNote, 0, 127),
+        std::clamp(velocity, 0.0f, 1.0f));
+    result.request.patch = instrument.patch;
+    // `patch.pan` is already applied inside the synth voice path, so keep audition request pan neutral.
+    result.request.pan = 0.0;
+    result.request.gateSeconds = std::max(0.01, gateSeconds);
     result.request.label = instrument.patch.name.empty()
         ? "instrument " + std::to_string(instrumentIndex)
         : instrument.patch.name;
+    synth_.noteOn(
+        result.request.note,
+        result.request.patch,
+        result.request.pan,
+        result.request.gateSeconds,
+        instrumentIndex);
+    result.ok = true;
     if (result.ok) {
         result.message = "Auditioned " + result.request.label;
     }
     return result;
+}
+
+void RealtimePlaybackSession::applyLiveInstrumentWaveformChange(int instrumentIndex, const std::string& oscillator, Waveform waveform) {
+    synth_.applyInstrumentWaveformToActiveVoices(instrumentIndex, oscillator, waveform);
+}
+
+void RealtimePlaybackSession::applyLiveInstrumentParameterChange(int instrumentIndex, const std::string& parameter, double value) {
+    synth_.applyInstrumentParameterToActiveVoices(instrumentIndex, parameter, value);
 }
 
 AuditionResult RealtimePlaybackSession::auditionStep(int patternIndex, int row, int track) {
@@ -305,7 +326,7 @@ RenderedAudio RealtimePlaybackSession::renderAuditionClip(
     sanitized.pan = std::clamp(sanitized.pan, -1.0, 1.0);
 
     Synthesizer synth(static_cast<double>(sampleRate_));
-    synth.noteOn(sanitized.note, sanitized.patch, sanitized.pan, sanitized.gateSeconds);
+    synth.noteOn(sanitized.note, sanitized.patch, sanitized.pan, sanitized.gateSeconds, -1);
 
     constexpr int blockSize = 128;
     std::vector<float> left(blockSize, 0.0f);
@@ -377,6 +398,7 @@ PlaybackSnapshot RealtimePlaybackSession::snapshot() const {
     result.followCursor = followCursor_;
     result.previewActive = synth_.active();
     result.sampleRate = sampleRate_;
+    result.synth = synth_.telemetry();
     return result;
 }
 
@@ -431,6 +453,7 @@ void RealtimePlaybackSession::renderSegment(float* left, float* right, int frame
                 frame,
                 it->note,
                 it->patch,
+                it->instrumentIndex,
                 it->pan,
                 it->gateSeconds
             });
@@ -447,7 +470,8 @@ void RealtimePlaybackSession::renderSegment(float* left, float* right, int frame
                 scratchEvents_[nextEvent].note,
                 scratchEvents_[nextEvent].patch,
                 scratchEvents_[nextEvent].pan,
-                scratchEvents_[nextEvent].gateSeconds);
+                scratchEvents_[nextEvent].gateSeconds,
+                scratchEvents_[nextEvent].instrumentIndex);
             ++nextEvent;
         }
 
@@ -566,6 +590,7 @@ void RealtimePlaybackSession::rebuildPreparedEvents() {
                     eventRow,
                     note,
                     state.patch,
+                    step.instrument,
                     state.pan,
                     gateRows * rowDuration
                 });
@@ -614,9 +639,9 @@ void RealtimePlaybackSession::applyMixBus(float* left, float* right, int sampleC
         return;
     }
     const double inputTrim = playbackHeadroomGain();
-    constexpr double limiterThreshold = 0.93;
-    const double attackCoeff = std::exp(-1.0 / (sampleRate_ * 0.0006));
-    const double releaseCoeff = std::exp(-1.0 / (sampleRate_ * 0.12));
+    constexpr double limiterThreshold = 0.80;
+    const double attackCoeff = std::exp(-1.0 / (sampleRate_ * 0.00018));
+    const double releaseCoeff = std::exp(-1.0 / (sampleRate_ * 0.14));
 
     for (int sample = 0; sample < sampleCount; ++sample) {
         double inLeft = static_cast<double>(left[sample]) * inputTrim;
@@ -631,6 +656,14 @@ void RealtimePlaybackSession::applyMixBus(float* left, float* right, int sampleC
         inRight *= mixBus_.gain;
         inLeft = dcBlock(inLeft, mixBus_.dcInputLeft, mixBus_.dcOutputLeft);
         inRight = dcBlock(inRight, mixBus_.dcInputRight, mixBus_.dcOutputRight);
+        const double busPeak = std::max(std::abs(inLeft), std::abs(inRight));
+        if (busPeak > 0.84) {
+            const double busTrim = 0.84 / std::max(busPeak, 1e-9);
+            inLeft *= busTrim;
+            inRight *= busTrim;
+        }
+        inLeft = std::tanh(inLeft * 0.92) / 0.92;
+        inRight = std::tanh(inRight * 0.92) / 0.92;
         left[sample] = safetySaturate(inLeft);
         right[sample] = safetySaturate(inRight);
     }
@@ -648,7 +681,7 @@ double RealtimePlaybackSession::playbackHeadroomGain() const {
         }
     }
     const double trackCount = std::max(1.0, static_cast<double>(audibleTracks));
-    const double effectiveTracks = 1.0 + (trackCount - 1.0) * 0.18;
+    const double effectiveTracks = 1.0 + (trackCount - 1.0) * 0.38;
     return 1.0 / std::sqrt(effectiveTracks);
 }
 

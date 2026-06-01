@@ -246,35 +246,54 @@ Song buildEbmTemplate() {
         const int bassSequence[] = {36, 36, 38, 36, 34, 36, 41, 43};
         for (int row = 0; row < 64; row += 4) {
             PatternStep& kick = pattern.step(row, 1);
-            kick.note = Note(36, row % 16 == 0 ? 1.0f : 0.86f);
+            kick.note = Note(36, row % 16 == 0 ? 1.0f : (row % 8 == 4 ? 0.9f : 0.84f));
             kick.instrument = kickInst;
-            kick.gate = 0.3;
+            kick.gate = row % 8 == 4 ? 0.36 : 0.3;
+            if (row % 16 == 12) {
+                kick.retriggerCount = 2;
+                kick.retriggerSpacingRows = 0.13;
+                kick.retriggerVelocityDecay = 0.68;
+            }
         }
         for (int row = 8; row < 64; row += 16) {
             PatternStep& snare = pattern.step(row, 1);
-            snare.note = Note(40, 0.84f);
+            snare.note = Note(40, 0.9f);
             snare.instrument = snareInst;
             snare.gate = 0.48;
+            snare.retriggerCount = row % 32 == 24 ? 2 : 1;
+            snare.retriggerSpacingRows = 0.16;
+            snare.retriggerVelocityDecay = 0.62;
         }
         for (int row = 2; row < 64; row += 2) {
             PatternStep& hat = pattern.step(row, 1);
-            hat.note = Note(74, row % 8 == 2 ? 0.42f : 0.24f);
+            hat.note = Note(74, row % 8 == 2 ? 0.56f : 0.34f);
             hat.instrument = hatInst;
-            hat.gate = 0.14;
+            hat.gate = row % 8 == 6 ? 0.1 : 0.16;
+            hat.probability = row % 8 == 6 ? 0.78 : 0.94;
+            if (row % 16 == 14) {
+                hat.retriggerCount = 3;
+                hat.retriggerSpacingRows = 0.1;
+                hat.retriggerVelocityDecay = 0.74;
+            }
         }
         for (int row = 12; row < 64; row += 16) {
             PatternStep& clap = pattern.step(row, 1);
-            clap.note = Note(70, 0.68f);
+            clap.note = Note(70, 0.74f);
             clap.instrument = clapInst;
             clap.gate = 0.4;
+            clap.retriggerCount = 2;
+            clap.retriggerSpacingRows = 0.12;
+            clap.retriggerVelocityDecay = 0.72;
         }
         for (int row = 0; row < 64; row += 2) {
             PatternStep& bass = pattern.step(row, 0);
-            bass.note = Note(bassSequence[(row / 2) % 8], row % 8 == 0 ? 0.94f : 0.78f);
+            bass.note = Note(bassSequence[(row / 2) % 8], row % 8 == 0 ? 1.0f : 0.88f);
             bass.instrument = bassInst;
-            bass.gate = 0.46;
+            bass.gate = row % 8 == 6 ? 0.4 : 0.6;
             if (row % 8 == 6) {
-                bass.automation["cutoff"] = 0.4;
+                bass.automation["cutoff"] = 0.34;
+            } else if (row % 8 == 2) {
+                bass.automation["drive"] = 0.56;
             }
         }
         for (int row = 0; row < 64; row += 8) {
@@ -386,41 +405,46 @@ Song makeDemoSong() {
     const int leadTrack = tracker.addTrack("Lead");
     const int padTrack = tracker.addTrack("Pad");
 
-    tracker.song().tracks[static_cast<std::size_t>(bassTrack)].volume = 0.9;
-    tracker.song().tracks[static_cast<std::size_t>(drumTrack)].volume = 0.95;
+    tracker.song().tracks[static_cast<std::size_t>(bassTrack)].volume = 1.0;
+    tracker.song().tracks[static_cast<std::size_t>(drumTrack)].volume = 1.0;
     tracker.song().tracks[static_cast<std::size_t>(leadTrack)].volume = 0.75;
     tracker.song().tracks[static_cast<std::size_t>(leadTrack)].pan = -0.18;
     tracker.song().tracks[static_cast<std::size_t>(padTrack)].volume = 0.55;
     tracker.song().tracks[static_cast<std::size_t>(padTrack)].pan = 0.2;
 
     SynthPatch bass;
-    bass.name = "Low Saw";
-    bass.oscillatorA = Waveform::Saw;
+    bass.name = "EBM Monolith";
+    bass.oscillatorA = Waveform::SuperSaw;
     bass.oscillatorB = Waveform::Square;
     bass.oscillatorC = Waveform::Triangle;
     bass.oscillatorCEnabled = true;
-    bass.oscillatorCMix = 0.2;
-    bass.oscillatorMix = 0.28;
+    bass.oscillatorCMix = 0.14;
+    bass.oscillatorMix = 0.36;
     bass.pulseWidth = 0.42;
-    bass.pwmDepth = 0.08;
-    bass.unisonVoices = 3;
-    bass.unisonDetuneCents = 5.5;
-    bass.stereoSpread = 0.12;
-    bass.subOscillator = 0.42;
-    bass.cutoff = 0.33;
-    bass.resonance = 0.16;
-    bass.filterEnvelopeAmount = 0.36;
+    bass.pwmDepth = 0.06;
+    bass.unisonVoices = 2;
+    bass.unisonDetuneCents = 3.5;
+    bass.stereoSpread = 0.08;
+    bass.subOscillator = 0.66;
+    bass.cutoff = 0.28;
+    bass.resonance = 0.2;
+    bass.filterMode = 1;
+    bass.filterDrive = 0.72;
+    bass.filterKeytrack = 0.42;
+    bass.filterEnvelopeAmount = 0.42;
     bass.lfoFilterDepth = 0.05;
     bass.hardSyncEnabled = true;
-    bass.hardSync = 0.1;
-    bass.drive = 0.3;
-    bass.wavefold = 0.08;
+    bass.hardSync = 0.08;
+    bass.drive = 0.36;
+    bass.wavefold = 0.06;
+    bass.analogColor = 0.74;
+    bass.toneTilt = -0.5;
     bass.bitCrushEnabled = true;
-    bass.bitCrush = 0.03;
-    bass.combMix = 0.08;
+    bass.bitCrush = 0.02;
+    bass.combMix = 0.06;
     bass.combTime = 0.052;
     bass.combFeedback = 0.18;
-    bass.gain = 0.48;
+    bass.gain = 0.62;
     bass.ampEnvelope.attack = 0.002;
     bass.ampEnvelope.decay = 0.09;
     bass.ampEnvelope.sustain = 0.58;
@@ -515,79 +539,99 @@ Song makeDemoSong() {
     pad.filterEnvelope.release = 0.44;
 
     SynthPatch kick;
-    kick.name = "EBM Kick";
+    kick.name = "EBM Iron Kick";
     kick.oscillatorA = Waveform::Sine;
     kick.oscillatorB = Waveform::Triangle;
-    kick.oscillatorMix = 0.08;
-    kick.pitchEnvelopeSemitones = 34.0;
-    kick.pitchEnvelopeDecay = 0.055;
-    kick.subOscillator = 0.22;
+    kick.oscillatorMix = 0.14;
+    kick.pitchEnvelopeSemitones = 40.0;
+    kick.pitchEnvelopeDecay = 0.05;
+    kick.subOscillator = 0.34;
     kick.noise = 0.03;
-    kick.noiseTone = 0.42;
-    kick.click = 0.42;
-    kick.transientShape = 0.46;
-    kick.transientNoise = 0.08;
-    kick.transientPitchSemitones = 10.0;
-    kick.transientPitchDecay = 0.012;
-    kick.transientBurstCount = 1;
-    kick.transientBurstDecay = 0.78;
-    kick.transientTone = 0.38;
-    kick.transientDecay = 0.01;
-    kick.cutoff = 0.62;
-    kick.filterEnvelopeAmount = 0.16;
-    kick.drive = 0.45;
-    kick.wavefold = 0.05;
-    kick.gain = 0.8;
+    kick.noiseTone = 0.36;
+    kick.click = 0.52;
+    kick.transientShape = 0.62;
+    kick.transientNoise = 0.12;
+    kick.transientPitchSemitones = 14.0;
+    kick.transientPitchDecay = 0.01;
+    kick.transientBurstCount = 2;
+    kick.transientBurstSpacing = 0.0028;
+    kick.transientBurstDecay = 0.72;
+    kick.transientTone = 0.34;
+    kick.transientDecay = 0.014;
+    kick.cutoff = 0.56;
+    kick.filterMode = 2;
+    kick.filterDrive = 0.72;
+    kick.filterKeytrack = 0.18;
+    kick.filterEnvelopeAmount = 0.22;
+    kick.fmEnabled = true;
+    kick.fmAmount = 0.11;
+    kick.fmRatio = 1.5;
+    kick.fmFeedback = 0.26;
+    kick.fmAlgorithm = 1;
+    kick.drive = 0.52;
+    kick.wavefold = 0.08;
+    kick.analogColor = 0.62;
+    kick.toneTilt = -0.36;
+    kick.gain = 0.98;
     kick.ampEnvelope.attack = 0.001;
     kick.ampEnvelope.decay = 0.12;
     kick.ampEnvelope.sustain = 0.0;
     kick.ampEnvelope.release = 0.035;
 
     SynthPatch snare;
-    snare.name = "Gated Snare";
+    snare.name = "Steel Snare";
     snare.oscillatorA = Waveform::Noise;
     snare.oscillatorB = Waveform::Square;
-    snare.oscillatorMix = 0.32;
-    snare.fmAmount = 0.16;
-    snare.fmRatio = 3.0;
+    snare.oscillatorMix = 0.24;
+    snare.fmAmount = 0.22;
+    snare.fmRatio = 3.6;
     snare.fmEnabled = true;
+    snare.fmFeedback = 0.3;
+    snare.fmAlgorithm = 3;
     snare.noise = 0.82;
-    snare.noiseTone = 0.78;
-    snare.click = 0.25;
-    snare.transientShape = 0.62;
-    snare.transientNoise = 0.58;
-    snare.transientPitchSemitones = 18.0;
+    snare.noiseTone = 0.84;
+    snare.click = 0.3;
+    snare.transientShape = 0.72;
+    snare.transientNoise = 0.66;
+    snare.transientPitchSemitones = 22.0;
     snare.transientPitchDecay = 0.009;
-    snare.transientBurstCount = 2;
-    snare.transientBurstSpacing = 0.003;
-    snare.transientBurstDecay = 0.58;
+    snare.transientBurstCount = 3;
+    snare.transientBurstSpacing = 0.0027;
+    snare.transientBurstDecay = 0.56;
     snare.transientTone = 0.86;
-    snare.transientDecay = 0.025;
+    snare.transientDecay = 0.03;
     snare.pitchEnvelopeSemitones = 9.0;
     snare.pitchEnvelopeDecay = 0.035;
-    snare.cutoff = 0.74;
-    snare.highPass = 0.36;
+    snare.cutoff = 0.8;
+    snare.filterMode = 2;
+    snare.filterDrive = 0.66;
+    snare.filterKeytrack = 0.28;
+    snare.highPass = 0.42;
     snare.ringEnabled = true;
-    snare.ringMod = 0.18;
-    snare.drive = 0.32;
-    snare.wavefold = 0.14;
+    snare.ringMod = 0.22;
+    snare.drive = 0.44;
+    snare.wavefold = 0.2;
+    snare.analogColor = 0.58;
+    snare.toneTilt = 0.22;
     snare.bitCrushEnabled = true;
-    snare.bitCrush = 0.12;
-    snare.gain = 0.48;
+    snare.bitCrush = 0.08;
+    snare.gain = 0.64;
     snare.ampEnvelope.attack = 0.001;
     snare.ampEnvelope.decay = 0.082;
     snare.ampEnvelope.sustain = 0.0;
     snare.ampEnvelope.release = 0.16;
 
     SynthPatch hat;
-    hat.name = "Metal Hat";
+    hat.name = "EBM Razor Hat";
     hat.oscillatorA = Waveform::Noise;
     hat.oscillatorB = Waveform::Square;
     hat.oscillatorMix = 0.65;
     hat.pulseWidth = 0.28;
     hat.fmEnabled = true;
-    hat.fmAmount = 0.22;
-    hat.fmRatio = 5.0;
+    hat.fmAmount = 0.28;
+    hat.fmRatio = 6.0;
+    hat.fmFeedback = 0.25;
+    hat.fmAlgorithm = 3;
     hat.chorusEnabled = true;
     hat.chorusMix = 0.08;
     hat.chorusRate = 0.9;
@@ -595,16 +639,19 @@ Song makeDemoSong() {
     hat.noise = 0.92;
     hat.noiseTone = 0.95;
     hat.click = 0.18;
-    hat.transientShape = 0.52;
+    hat.transientShape = 0.62;
     hat.transientNoise = 0.72;
     hat.transientPitchSemitones = 24.0;
     hat.transientPitchDecay = 0.007;
-    hat.transientBurstCount = 3;
+    hat.transientBurstCount = 4;
     hat.transientBurstSpacing = 0.0025;
     hat.transientBurstDecay = 0.5;
     hat.transientTone = 0.98;
     hat.transientDecay = 0.008;
-    hat.cutoff = 0.95;
+    hat.cutoff = 0.9;
+    hat.filterMode = 2;
+    hat.filterDrive = 0.48;
+    hat.filterKeytrack = 0.2;
     hat.highPass = 0.78;
     hat.ringEnabled = true;
     hat.ringMod = 0.35;
@@ -613,7 +660,9 @@ Song makeDemoSong() {
     hat.bitCrushEnabled = true;
     hat.bitCrush = 0.22;
     hat.sampleRateReduction = 0.18;
-    hat.gain = 0.25;
+    hat.analogColor = 0.52;
+    hat.toneTilt = 0.44;
+    hat.gain = 0.32;
     hat.ampEnvelope.attack = 0.001;
     hat.ampEnvelope.decay = 0.035;
     hat.ampEnvelope.sustain = 0.0;
@@ -699,7 +748,7 @@ Song makeDemoSong() {
     drone.ampEnvelope.release = 0.65;
 
     SynthPatch clap = snare;
-    clap.name = "Factory Clap";
+    clap.name = "Factory Slap Clap";
     clap.oscillatorA = Waveform::Noise;
     clap.oscillatorB = Waveform::Square;
     clap.oscillatorC = Waveform::Noise;
@@ -712,19 +761,24 @@ Song makeDemoSong() {
     clap.transientNoise = 0.7;
     clap.transientPitchSemitones = 14.0;
     clap.transientPitchDecay = 0.01;
-    clap.transientBurstCount = 4;
+    clap.transientBurstCount = 5;
     clap.transientBurstSpacing = 0.0042;
     clap.transientBurstDecay = 0.64;
     clap.transientTone = 0.9;
     clap.transientDecay = 0.015;
+    clap.filterMode = 2;
+    clap.filterDrive = 0.54;
+    clap.fmAlgorithm = 3;
     clap.bitCrushEnabled = true;
-    clap.bitCrush = 0.09;
-    clap.gain = 0.38;
+    clap.bitCrush = 0.06;
+    clap.analogColor = 0.44;
+    clap.toneTilt = 0.3;
+    clap.gain = 0.46;
     clap.ampEnvelope.decay = 0.055;
     clap.ampEnvelope.release = 0.08;
 
     SynthPatch tom = kick;
-    tom.name = "Tunnel Tom";
+    tom.name = "Tunnel Assault Tom";
     tom.pitchEnvelopeSemitones = 12.0;
     tom.pitchEnvelopeDecay = 0.045;
     tom.cutoff = 0.52;
@@ -732,13 +786,18 @@ Song makeDemoSong() {
     tom.transientShape = 0.42;
     tom.transientPitchSemitones = 9.0;
     tom.transientPitchDecay = 0.012;
-    tom.transientBurstCount = 2;
+    tom.transientBurstCount = 3;
     tom.transientBurstSpacing = 0.0034;
     tom.transientBurstDecay = 0.66;
     tom.transientTone = 0.58;
-    tom.drive = 0.32;
+    tom.filterMode = 1;
+    tom.filterDrive = 0.58;
+    tom.filterKeytrack = 0.35;
+    tom.drive = 0.42;
     tom.wavefold = 0.06;
-    tom.gain = 0.5;
+    tom.analogColor = 0.56;
+    tom.toneTilt = -0.18;
+    tom.gain = 0.58;
     tom.ampEnvelope.decay = 0.12;
     tom.ampEnvelope.release = 0.1;
 
@@ -883,7 +942,7 @@ Song makeDemoSong() {
     choir.ampEnvelope.release = 0.92;
 
     SynthPatch reese = bass;
-    reese.name = "Reese Pressure";
+    reese.name = "Reese Pressure XL";
     reese.oscillatorA = Waveform::Saw;
     reese.oscillatorB = Waveform::Saw;
     reese.oscillatorC = Waveform::Square;
@@ -900,21 +959,26 @@ Song makeDemoSong() {
     reese.detuneCCents = -22.0;
     reese.detuneDCents = 9.0;
     reese.subOscillator = 0.48;
-    reese.cutoff = 0.26;
-    reese.resonance = 0.24;
+    reese.cutoff = 0.24;
+    reese.resonance = 0.28;
+    reese.filterMode = 1;
+    reese.filterDrive = 0.64;
+    reese.filterKeytrack = 0.38;
     reese.filterEnvelopeAmount = 0.18;
     reese.lfoFilterDepth = 0.18;
     reese.hardSyncEnabled = true;
     reese.hardSync = 0.1;
-    reese.drive = 0.48;
-    reese.wavefold = 0.12;
+    reese.drive = 0.56;
+    reese.wavefold = 0.14;
+    reese.analogColor = 0.7;
+    reese.toneTilt = -0.34;
     reese.bitCrushEnabled = true;
     reese.bitCrush = 0.06;
     reese.combMix = 0.22;
     reese.combTime = 0.046;
     reese.combFeedback = 0.32;
     reese.highPass = 0.06;
-    reese.gain = 0.3;
+    reese.gain = 0.48;
     reese.ampEnvelope.attack = 0.003;
     reese.ampEnvelope.decay = 0.16;
     reese.ampEnvelope.sustain = 0.64;
@@ -1008,6 +1072,44 @@ Song makeDemoSong() {
     return tracker.song();
 }
 
+Song makeBlankSong() {
+    Tracker tracker;
+    tracker.song().title = "Untitled";
+    tracker.song().author.clear();
+    tracker.song().description = "Blank project";
+    tracker.song().notes.clear();
+    tracker.song().bpm = 128.0;
+    tracker.song().rowsPerBeat = 4;
+    tracker.song().sampleRate = 48000;
+
+    const int bassTrack = tracker.addTrack("Bass");
+    const int drumTrack = tracker.addTrack("Drums");
+    const int leadTrack = tracker.addTrack("Lead");
+    const int padTrack = tracker.addTrack("Pad");
+    (void)bassTrack;
+    (void)drumTrack;
+    (void)leadTrack;
+    (void)padTrack;
+
+    SynthPatch initPatch;
+    initPatch.name = "Init";
+    initPatch.gain = 0.72;
+    initPatch.cutoff = 0.58;
+    initPatch.resonance = 0.12;
+    initPatch.drive = 0.08;
+    initPatch.ampEnvelope.attack = 0.002;
+    initPatch.ampEnvelope.decay = 0.09;
+    initPatch.ampEnvelope.sustain = 0.76;
+    initPatch.ampEnvelope.release = 0.14;
+    tracker.addInstrument(initPatch);
+
+    Pattern pattern("Pattern1", 64, static_cast<int>(tracker.song().tracks.size()));
+    const int patternIndex = tracker.addPattern(pattern);
+    tracker.appendPatternToOrder(patternIndex);
+
+    return tracker.song();
+}
+
 Song makeTemplateSong(const std::string& templateName) {
     const std::string normalized = lowerCopy(templateName);
     if (normalized.empty() || normalized == "default" || normalized == "demo" || normalized == "darkwave_foundation") {
@@ -1037,15 +1139,18 @@ const char* waveformName(Waveform waveform) {
         case Waveform::Saw: return "saw";
         case Waveform::Triangle: return "triangle";
         case Waveform::Noise: return "noise";
+        case Waveform::SuperSaw: return "supersaw";
     }
     return "sine";
 }
 
 Waveform waveformFromName(const std::string& name) {
-    if (name == "square") return Waveform::Square;
-    if (name == "saw") return Waveform::Saw;
-    if (name == "triangle") return Waveform::Triangle;
-    if (name == "noise") return Waveform::Noise;
+    const std::string normalized = lowerCopy(name);
+    if (normalized == "square" || normalized == "sqr") return Waveform::Square;
+    if (normalized == "saw") return Waveform::Saw;
+    if (normalized == "triangle" || normalized == "tri") return Waveform::Triangle;
+    if (normalized == "noise" || normalized == "noi") return Waveform::Noise;
+    if (normalized == "supersaw" || normalized == "super_saw" || normalized == "ssaw" || normalized == "sup") return Waveform::SuperSaw;
     return Waveform::Sine;
 }
 

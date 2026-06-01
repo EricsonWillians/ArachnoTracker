@@ -65,6 +65,11 @@ public:
     void clearAllStepEffects();
     void transposeCurrent(int semitones);
     void transposeTrack(int track, int semitones);
+    void setSelectionOctave(int octave);
+    void setSelectionVelocity(double velocity);
+    void nudgeSelectionVelocity(double velocityDelta);
+    void transposeSelection(int semitones);
+    void repeatSelection(int repeats, int rowSpacing, int trackSpacing = 0);
     void setTempo(double bpm);
     void setRowsPerBeat(int rowsPerBeat);
     void setTitle(const std::string& title);

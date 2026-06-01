@@ -39,16 +39,48 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
         patch.oscillatorCMix = value;
     } else if (name == "osc_d_mix" || name == "oscillator_d_mix") {
         patch.oscillatorDMix = value;
+    } else if (name == "osc_a_level" || name == "oscillator_a_level") {
+        patch.oscALevel = value;
+    } else if (name == "osc_b_level" || name == "oscillator_b_level") {
+        patch.oscBLevel = value;
+    } else if (name == "osc_c_level" || name == "oscillator_c_level") {
+        patch.oscCLevel = value;
+    } else if (name == "osc_d_level" || name == "oscillator_d_level") {
+        patch.oscDLevel = value;
     } else if (name == "detune" || name == "detune_cents") {
         patch.detuneCents = value;
     } else if (name == "detune_c" || name == "detune_c_cents") {
         patch.detuneCCents = value;
     } else if (name == "detune_d" || name == "detune_d_cents") {
         patch.detuneDCents = value;
+    } else if (name == "osc_a_detune" || name == "osc_a_detune_cents" || name == "oscillator_a_detune_cents") {
+        patch.oscADetuneCents = value;
+    } else if (name == "osc_b_detune" || name == "osc_b_detune_cents" || name == "oscillator_b_detune_cents") {
+        patch.oscBDetuneCents = value;
+    } else if (name == "osc_c_detune" || name == "osc_c_detune_cents" || name == "oscillator_c_detune_cents") {
+        patch.oscCDetuneCents = value;
+    } else if (name == "osc_d_detune" || name == "osc_d_detune_cents" || name == "oscillator_d_detune_cents") {
+        patch.oscDDetuneCents = value;
     } else if (name == "pulse" || name == "pulse_width") {
         patch.pulseWidth = value;
+    } else if (name == "osc_a_pulse" || name == "osc_a_pulse_width" || name == "oscillator_a_pulse_width") {
+        patch.oscAPulseWidth = value;
+    } else if (name == "osc_b_pulse" || name == "osc_b_pulse_width" || name == "oscillator_b_pulse_width") {
+        patch.oscBPulseWidth = value;
+    } else if (name == "osc_c_pulse" || name == "osc_c_pulse_width" || name == "oscillator_c_pulse_width") {
+        patch.oscCPulseWidth = value;
+    } else if (name == "osc_d_pulse" || name == "osc_d_pulse_width" || name == "oscillator_d_pulse_width") {
+        patch.oscDPulseWidth = value;
     } else if (name == "pwm" || name == "pwm_depth") {
         patch.pwmDepth = value;
+    } else if (name == "osc_a_pwm" || name == "osc_a_pwm_depth" || name == "oscillator_a_pwm_depth") {
+        patch.oscAPwmDepth = value;
+    } else if (name == "osc_b_pwm" || name == "osc_b_pwm_depth" || name == "oscillator_b_pwm_depth") {
+        patch.oscBPwmDepth = value;
+    } else if (name == "osc_c_pwm" || name == "osc_c_pwm_depth" || name == "oscillator_c_pwm_depth") {
+        patch.oscCPwmDepth = value;
+    } else if (name == "osc_d_pwm" || name == "osc_d_pwm_depth" || name == "oscillator_d_pwm_depth") {
+        patch.oscDPwmDepth = value;
     } else if (name == "fm_enabled") {
         patch.fmEnabled = asEnabled(value);
     } else if (name == "fm" || name == "fm_amount") {
@@ -57,6 +89,8 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
         patch.fmRatio = value;
     } else if (name == "fm_feedback") {
         patch.fmFeedback = value;
+    } else if (name == "fm_algorithm" || name == "fm_algo") {
+        patch.fmAlgorithm = static_cast<int>(std::lround(value));
     } else if (name == "chorus_enabled") {
         patch.chorusEnabled = asEnabled(value);
     } else if (name == "chorus" || name == "chorus_mix") {
@@ -85,6 +119,12 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
         patch.cutoff = value;
     } else if (name == "resonance") {
         patch.resonance = value;
+    } else if (name == "filter_mode") {
+        patch.filterMode = static_cast<int>(std::lround(value));
+    } else if (name == "filter_drive") {
+        patch.filterDrive = value;
+    } else if (name == "filter_keytrack") {
+        patch.filterKeytrack = value;
     } else if (name == "filter_env" || name == "filter_envelope") {
         patch.filterEnvelopeAmount = value;
     } else if (name == "lfo_filter_depth") {
@@ -111,6 +151,14 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
         patch.hardSync = value;
     } else if (name == "drive") {
         patch.drive = value;
+    } else if (name == "osc_a_drive" || name == "oscillator_a_drive") {
+        patch.oscADrive = value;
+    } else if (name == "osc_b_drive" || name == "oscillator_b_drive") {
+        patch.oscBDrive = value;
+    } else if (name == "osc_c_drive" || name == "oscillator_c_drive") {
+        patch.oscCDrive = value;
+    } else if (name == "osc_d_drive" || name == "oscillator_d_drive") {
+        patch.oscDDrive = value;
     } else if (name == "wavefold") {
         patch.wavefold = value;
     } else if (name == "bit_crush_enabled" || name == "bitcrush_enabled") {
@@ -147,6 +195,10 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
         patch.transientTone = value;
     } else if (name == "transient_decay") {
         patch.transientDecay = value;
+    } else if (name == "analog_color" || name == "analog") {
+        patch.analogColor = value;
+    } else if (name == "tone_tilt" || name == "tilt") {
+        patch.toneTilt = value;
     } else if (name == "gain") {
         patch.gain = value;
     } else if (name == "pan") {
@@ -158,6 +210,8 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
     } else if (name == "sustain" || name == "amp_sustain") {
         patch.ampEnvelope.sustain = value;
     } else if (name == "release" || name == "amp_release") {
+        patch.ampEnvelope.release = value;
+    } else if (name == "hold" || name == "sustain_hold") {
         patch.ampEnvelope.release = value;
     } else if (name == "filter_attack") {
         patch.filterEnvelope.attack = value;

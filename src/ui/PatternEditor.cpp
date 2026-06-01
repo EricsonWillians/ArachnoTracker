@@ -380,6 +380,112 @@ void PatternEditorSession::transposeTrack(int track, int semitones) {
     }
 }
 
+void PatternEditorSession::setSelectionOctave(int octave) {
+    Pattern& pattern = activePattern();
+    const int targetOctave = std::clamp(octave, 0, 9);
+    const int baseMidi = std::clamp(noteNameToMidi("C" + std::to_string(targetOctave)), 0, 127);
+    for (int rowOffset = 0; rowOffset < selection_.rowCount; ++rowOffset) {
+        for (int trackOffset = 0; trackOffset < selection_.trackCount; ++trackOffset) {
+            PatternStep& step = pattern.step(
+                selection_.startRow + rowOffset,
+                selection_.startTrack + trackOffset);
+            if (!step.note.has_value()) {
+                continue;
+            }
+            const int pitchClass = ((step.note->midi % 12) + 12) % 12;
+            step.note->midi = std::clamp(baseMidi + pitchClass, 0, 127);
+        }
+    }
+}
+
+void PatternEditorSession::setSelectionVelocity(double velocity) {
+    const float targetVelocity = static_cast<float>(std::clamp(velocity, 0.0, 1.0));
+    Pattern& pattern = activePattern();
+    for (int rowOffset = 0; rowOffset < selection_.rowCount; ++rowOffset) {
+        for (int trackOffset = 0; trackOffset < selection_.trackCount; ++trackOffset) {
+            PatternStep& step = pattern.step(
+                selection_.startRow + rowOffset,
+                selection_.startTrack + trackOffset);
+            if (!step.note.has_value()) {
+                continue;
+            }
+            step.note->velocity = targetVelocity;
+        }
+    }
+}
+
+void PatternEditorSession::nudgeSelectionVelocity(double velocityDelta) {
+    const float delta = static_cast<float>(velocityDelta);
+    Pattern& pattern = activePattern();
+    for (int rowOffset = 0; rowOffset < selection_.rowCount; ++rowOffset) {
+        for (int trackOffset = 0; trackOffset < selection_.trackCount; ++trackOffset) {
+            PatternStep& step = pattern.step(
+                selection_.startRow + rowOffset,
+                selection_.startTrack + trackOffset);
+            if (!step.note.has_value()) {
+                continue;
+            }
+            step.note->velocity = std::clamp(step.note->velocity + delta, 0.0f, 1.0f);
+        }
+    }
+}
+
+void PatternEditorSession::transposeSelection(int semitones) {
+    Pattern& pattern = activePattern();
+    for (int rowOffset = 0; rowOffset < selection_.rowCount; ++rowOffset) {
+        for (int trackOffset = 0; trackOffset < selection_.trackCount; ++trackOffset) {
+            PatternStep& step = pattern.step(
+                selection_.startRow + rowOffset,
+                selection_.startTrack + trackOffset);
+            if (!step.note.has_value()) {
+                continue;
+            }
+            step.note->midi = std::clamp(step.note->midi + semitones, 0, 127);
+        }
+    }
+}
+
+void PatternEditorSession::repeatSelection(int repeats, int rowSpacing, int trackSpacing) {
+    if (repeats <= 0) {
+        throw std::invalid_argument("repeats must be positive");
+    }
+    if (rowSpacing == 0 && trackSpacing == 0) {
+        throw std::invalid_argument("repeat spacing must not be zero");
+    }
+
+    Pattern& pattern = activePattern();
+    std::vector<std::vector<PatternStep>> source;
+    source.reserve(static_cast<std::size_t>(selection_.rowCount));
+    for (int rowOffset = 0; rowOffset < selection_.rowCount; ++rowOffset) {
+        std::vector<PatternStep> row;
+        row.reserve(static_cast<std::size_t>(selection_.trackCount));
+        for (int trackOffset = 0; trackOffset < selection_.trackCount; ++trackOffset) {
+            row.push_back(pattern.step(
+                selection_.startRow + rowOffset,
+                selection_.startTrack + trackOffset));
+        }
+        source.push_back(row);
+    }
+
+    for (int repeatIndex = 1; repeatIndex <= repeats; ++repeatIndex) {
+        const int baseRow = selection_.startRow + repeatIndex * rowSpacing;
+        const int baseTrack = selection_.startTrack + repeatIndex * trackSpacing;
+        for (int rowOffset = 0; rowOffset < selection_.rowCount; ++rowOffset) {
+            const int destinationRow = baseRow + rowOffset;
+            if (destinationRow < 0 || destinationRow >= pattern.rowCount()) {
+                continue;
+            }
+            for (int trackOffset = 0; trackOffset < selection_.trackCount; ++trackOffset) {
+                const int destinationTrack = baseTrack + trackOffset;
+                if (destinationTrack < 0 || destinationTrack >= pattern.trackCount()) {
+                    continue;
+                }
+                pattern.step(destinationRow, destinationTrack) = source[static_cast<std::size_t>(rowOffset)][static_cast<std::size_t>(trackOffset)];
+            }
+        }
+    }
+}
+
 void PatternEditorSession::setTempo(double bpm) {
     if (bpm <= 0.0) {
         throw std::invalid_argument("tempo must be positive");
@@ -942,6 +1048,19 @@ std::string PatternEditorSession::applyCommand(const std::string& command) {
         } else {
             transposeCurrent(semitones);
         }
+    } else if (verb == "transpose-selection") {
+        transposeSelection(readValue<int>(in, "semitones"));
+    } else if (verb == "octave") {
+        setSelectionOctave(readValue<int>(in, "octave"));
+    } else if (verb == "velocity" || verb == "vel") {
+        setSelectionVelocity(readValue<double>(in, "velocity"));
+    } else if (verb == "vel-nudge") {
+        nudgeSelectionVelocity(readValue<double>(in, "velocity delta"));
+    } else if (verb == "repeat-selection" || verb == "duplicate-selection") {
+        const int repeats = readValue<int>(in, "repeats");
+        const int rowSpacing = readOptionalInt(in, selection_.rowCount);
+        const int trackSpacing = readOptionalInt(in, 0);
+        repeatSelection(repeats, rowSpacing, trackSpacing);
     } else if (verb == "fill-scale") {
         const int track = readValue<int>(in, "track");
         const int startRow = readValue<int>(in, "start row");

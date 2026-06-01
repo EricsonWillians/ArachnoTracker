@@ -73,7 +73,7 @@ struct AppSessionSnapshot {
 class ApplicationSession {
 public:
     explicit ApplicationSession(
-        Song song = makeDemoSong(),
+        Song song = makeBlankSong(),
         int sampleRate = 48000,
         AppSettings settings = AppSettings {});
 

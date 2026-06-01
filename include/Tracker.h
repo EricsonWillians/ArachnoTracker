@@ -51,6 +51,7 @@ private:
 };
 
 Song makeDemoSong();
+Song makeBlankSong();
 Song makeTemplateSong(const std::string& templateName);
 std::vector<std::string> demoTemplateNames();
 

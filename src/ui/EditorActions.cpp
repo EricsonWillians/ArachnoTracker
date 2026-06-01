@@ -79,6 +79,11 @@ const std::vector<EditorAction>& editorActions() {
         {"step.effect.param", "fxp <name> <param> <value>", "Set effect parameter", "Step Editing", "Shift+E", "Set a named per-cell effect parameter on the active step.", true},
         {"step.effect.clear", "fx-clear [name|*]", "Clear effects", "Step Editing", "", "Clear one or all per-cell effects on the active step.", true},
         {"step.transpose", "transpose <semitones> [track]", "Transpose", "Step Editing", "T", "Transpose the active step or an entire track.", true},
+        {"step.octave", "octave <octave>", "Set selection octave", "Step Editing", "Ctrl+0..8", "Set every selected note to the target octave while preserving note name.", true},
+        {"step.velocity", "velocity <value>", "Set selection velocity", "Step Editing", "", "Set velocity for every note in the current selection (0..1).", true},
+        {"step.velocity_nudge", "vel-nudge <velocity-delta>", "Nudge selection velocity", "Step Editing", "Ctrl+Shift+Up/Down", "Increase or decrease velocity across selected notes.", true},
+        {"selection.transpose", "transpose-selection <semitones>", "Transpose selection", "Selection", "Ctrl+Alt+Up/Down", "Transpose all notes in the current selection.", true},
+        {"selection.repeat", "repeat-selection <repeats> [row-spacing] [track-spacing]", "Repeat selection", "Selection", "Ctrl+Shift+R", "Duplicate the selected block with optional row/track spacing.", true},
 
         {"generate.scale", "fill-scale <track> <start> <count> <stride> <root> <scale> <inst> [velocity] [gate]", "Fill scale", "Composition", "Ctrl+F", "Generate a scale-based melodic or harmonic sequence.", true},
         {"generate.euclid", "euclid <track> <start> <steps> <pulses> <root> <inst> [velocity] [gate]", "Euclidean rhythm", "Composition", "Ctrl+E", "Generate an evenly distributed rhythmic pattern.", true},

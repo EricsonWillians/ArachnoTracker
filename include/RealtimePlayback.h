@@ -40,6 +40,7 @@ struct PlaybackSnapshot {
     bool followCursor = true;
     bool previewActive = false;
     int sampleRate = 48000;
+    SynthRenderTelemetry synth;
 };
 
 struct AuditionRequest {
@@ -93,6 +94,8 @@ public:
         int midiNote = 60,
         float velocity = 0.8f,
         double gateSeconds = 0.35);
+    void applyLiveInstrumentWaveformChange(int instrumentIndex, const std::string& oscillator, Waveform waveform);
+    void applyLiveInstrumentParameterChange(int instrumentIndex, const std::string& parameter, double value);
     AuditionResult auditionStep(int patternIndex, int row, int track);
     RenderedAudio renderAuditionClip(const AuditionRequest& request, double durationSeconds = 1.0) const;
 
@@ -120,6 +123,7 @@ private:
         int frame = 0;
         Note note;
         SynthPatch patch;
+        int instrumentIndex = -1;
         double pan = 0.0;
         double gateSeconds = 0.2;
     };
@@ -128,6 +132,7 @@ private:
         double row = 0.0;
         Note note;
         SynthPatch patch;
+        int instrumentIndex = -1;
         double pan = 0.0;
         double gateSeconds = 0.2;
     };

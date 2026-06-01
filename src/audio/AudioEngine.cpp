@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include "StepEffects.h"
@@ -263,11 +265,33 @@ RenderedAudio AudioEngine::renderSong(const Song& song, const RenderOptions& opt
         return lhs.frame < rhs.frame;
     });
 
-    Synthesizer synth(static_cast<double>(sampleRate));
-    std::size_t nextEvent = 0;
+    const unsigned int hwConcurrency = std::max(1u, std::thread::hardware_concurrency());
+    const int maxParallelBuses = std::max(1, std::min(4, static_cast<int>(hwConcurrency)));
+    const int desiredBuses = std::max(1, std::min(maxParallelBuses, std::max(1, renderableTrackCount)));
+    const bool parallelBusRender = desiredBuses > 1 && events.size() > 96;
+    const int busCount = parallelBusRender ? desiredBuses : 1;
+
+    std::vector<std::vector<ScheduledNote>> busEvents(static_cast<std::size_t>(busCount));
+    for (const ScheduledNote& event : events) {
+        const int bus = busCount <= 1 ? 0 : std::clamp(event.track, 0, std::numeric_limits<int>::max()) % busCount;
+        busEvents[static_cast<std::size_t>(bus)].push_back(event);
+    }
+    std::vector<Synthesizer> busSynths;
+    busSynths.reserve(static_cast<std::size_t>(busCount));
+    for (int bus = 0; bus < busCount; ++bus) {
+        busSynths.emplace_back(static_cast<double>(sampleRate));
+    }
+    std::vector<std::size_t> busNextEvent(static_cast<std::size_t>(busCount), 0);
+
     constexpr int blockSize = 128;
     std::vector<float> left(blockSize, 0.0f);
     std::vector<float> right(blockSize, 0.0f);
+    std::vector<std::vector<float>> busLeft(
+        static_cast<std::size_t>(busCount),
+        std::vector<float>(static_cast<std::size_t>(blockSize), 0.0f));
+    std::vector<std::vector<float>> busRight(
+        static_cast<std::size_t>(busCount),
+        std::vector<float>(static_cast<std::size_t>(blockSize), 0.0f));
     MixBusState mixBus;
     const double inputTrim = playbackHeadroomGain(renderableTrackCount);
 
@@ -275,26 +299,61 @@ RenderedAudio AudioEngine::renderSong(const Song& song, const RenderOptions& opt
         const int framesThisBlock = std::min(blockSize, totalFrames - frame);
         std::fill(left.begin(), left.begin() + framesThisBlock, 0.0f);
         std::fill(right.begin(), right.begin() + framesThisBlock, 0.0f);
+        auto renderBus = [&](int bus) {
+            std::vector<float>& busL = busLeft[static_cast<std::size_t>(bus)];
+            std::vector<float>& busR = busRight[static_cast<std::size_t>(bus)];
+            std::fill(busL.begin(), busL.begin() + framesThisBlock, 0.0f);
+            std::fill(busR.begin(), busR.begin() + framesThisBlock, 0.0f);
+            Synthesizer& synth = busSynths[static_cast<std::size_t>(bus)];
+            std::size_t& nextEvent = busNextEvent[static_cast<std::size_t>(bus)];
+            const std::vector<ScheduledNote>& eventsForBus = busEvents[static_cast<std::size_t>(bus)];
 
-        int cursor = 0;
-        while (cursor < framesThisBlock) {
-            const int absoluteFrame = frame + cursor;
-            while (nextEvent < events.size() && events[nextEvent].frame <= absoluteFrame) {
-                synth.noteOn(
-                    events[nextEvent].note,
-                    events[nextEvent].patch,
-                    events[nextEvent].pan,
-                    events[nextEvent].gateSeconds);
-                ++nextEvent;
+            int cursor = 0;
+            while (cursor < framesThisBlock) {
+                const int absoluteFrame = frame + cursor;
+                while (nextEvent < eventsForBus.size() && eventsForBus[nextEvent].frame <= absoluteFrame) {
+                    synth.noteOn(
+                        eventsForBus[nextEvent].note,
+                        eventsForBus[nextEvent].patch,
+                        eventsForBus[nextEvent].pan,
+                        eventsForBus[nextEvent].gateSeconds);
+                    ++nextEvent;
+                }
+
+                int segmentEnd = framesThisBlock;
+                if (nextEvent < eventsForBus.size()) {
+                    segmentEnd = std::min(segmentEnd, std::max(cursor + 1, eventsForBus[nextEvent].frame - frame));
+                }
+
+                synth.render(busL.data() + cursor, busR.data() + cursor, segmentEnd - cursor);
+                cursor = segmentEnd;
             }
+        };
 
-            int segmentEnd = framesThisBlock;
-            if (nextEvent < events.size()) {
-                segmentEnd = std::min(segmentEnd, std::max(cursor + 1, events[nextEvent].frame - frame));
+        if (parallelBusRender) {
+            std::vector<std::thread> workers;
+            workers.reserve(static_cast<std::size_t>(busCount));
+            for (int bus = 0; bus < busCount; ++bus) {
+                workers.emplace_back([&, bus]() {
+                    renderBus(bus);
+                });
             }
+            for (std::thread& worker : workers) {
+                if (worker.joinable()) {
+                    worker.join();
+                }
+            }
+        } else {
+            renderBus(0);
+        }
 
-            synth.render(left.data() + cursor, right.data() + cursor, segmentEnd - cursor);
-            cursor = segmentEnd;
+        for (int bus = 0; bus < busCount; ++bus) {
+            const std::vector<float>& busL = busLeft[static_cast<std::size_t>(bus)];
+            const std::vector<float>& busR = busRight[static_cast<std::size_t>(bus)];
+            for (int index = 0; index < framesThisBlock; ++index) {
+                left[static_cast<std::size_t>(index)] += busL[static_cast<std::size_t>(index)];
+                right[static_cast<std::size_t>(index)] += busR[static_cast<std::size_t>(index)];
+            }
         }
 
         applyMixBus(left.data(), right.data(), framesThisBlock, sampleRate, inputTrim, mixBus);

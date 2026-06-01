@@ -9,7 +9,8 @@ enum class Waveform {
     Square,
     Saw,
     Triangle,
-    Noise
+    Noise,
+    SuperSaw
 };
 
 struct Envelope {
@@ -21,26 +22,47 @@ struct Envelope {
 
 struct SynthPatch {
     std::string name = "Init";
-    Waveform oscillatorA = Waveform::Saw;
-    Waveform oscillatorB = Waveform::Square;
-    Waveform oscillatorC = Waveform::Triangle;
-    Waveform oscillatorD = Waveform::Saw;
+    Waveform oscillatorA = Waveform::Sine;
+    Waveform oscillatorB = Waveform::Sine;
+    Waveform oscillatorC = Waveform::Sine;
+    Waveform oscillatorD = Waveform::Sine;
     bool oscillatorAEnabled = true;
-    bool oscillatorBEnabled = true;
+    bool oscillatorBEnabled = false;
     bool oscillatorCEnabled = false;
     bool oscillatorDEnabled = false;
     double oscillatorMix = 0.35;
     double oscillatorCMix = 0.0;
     double oscillatorDMix = 0.0;
+    double oscALevel = 1.0;
+    double oscBLevel = 1.0;
+    double oscCLevel = 1.0;
+    double oscDLevel = 1.0;
     double detuneCents = 7.0;
     double detuneCCents = -7.0;
     double detuneDCents = 12.0;
+    double oscADetuneCents = 0.0;
+    double oscBDetuneCents = 0.0;
+    double oscCDetuneCents = 0.0;
+    double oscDDetuneCents = 0.0;
     double pulseWidth = 0.5;
     double pwmDepth = 0.0;
+    double oscAPulseWidth = 0.5;
+    double oscBPulseWidth = 0.5;
+    double oscCPulseWidth = 0.5;
+    double oscDPulseWidth = 0.5;
+    double oscAPwmDepth = 0.0;
+    double oscBPwmDepth = 0.0;
+    double oscCPwmDepth = 0.0;
+    double oscDPwmDepth = 0.0;
+    double oscADrive = 0.0;
+    double oscBDrive = 0.0;
+    double oscCDrive = 0.0;
+    double oscDDrive = 0.0;
     bool fmEnabled = false;
     double fmAmount = 0.0;
     double fmRatio = 2.0;
     double fmFeedback = 0.0;
+    int fmAlgorithm = 0;
     bool chorusEnabled = false;
     double chorusMix = 0.0;
     double chorusRate = 0.35;
@@ -49,12 +71,15 @@ struct SynthPatch {
     double unisonDetuneCents = 0.0;
     double stereoSpread = 0.0;
     bool subEnabled = true;
-    double subOscillator = 0.18;
+    double subOscillator = 0.24;
     bool noiseEnabled = true;
-    double noise = 0.02;
+    double noise = 0.012;
     double noiseTone = 0.58;
     double cutoff = 0.72;
-    double resonance = 0.12;
+    double resonance = 0.16;
+    int filterMode = 0;
+    double filterDrive = 0.2;
+    double filterKeytrack = 0.35;
     double filterEnvelopeAmount = 0.18;
     double lfoFilterDepth = 0.0;
     double lfoPanDepth = 0.0;
@@ -67,7 +92,7 @@ struct SynthPatch {
     double ringMod = 0.0;
     bool hardSyncEnabled = false;
     double hardSync = 0.0;
-    double drive = 0.08;
+    double drive = 0.12;
     double wavefold = 0.0;
     bool bitCrushEnabled = false;
     double bitCrush = 0.0;
@@ -86,7 +111,9 @@ struct SynthPatch {
     double transientBurstDecay = 0.7;
     double transientTone = 0.72;
     double transientDecay = 0.012;
-    double gain = 0.55;
+    double analogColor = 0.45;
+    double toneTilt = -0.10;
+    double gain = 0.52;
     double pan = 0.0;
     Envelope ampEnvelope;
     Envelope filterEnvelope;

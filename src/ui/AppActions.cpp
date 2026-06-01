@@ -89,7 +89,7 @@ std::string normalizeParameterName(const std::string& rawName, const std::string
     std::string name = lowerCopy(rawName);
     name.erase(std::remove(name.begin(), name.end(), '.'), name.end());
     std::replace(name.begin(), name.end(), '-', '_');
-    if (name == "a|b") {
+    if (name == "a|b" || name == "a|b|c|d") {
         return "oscillator";
     }
     if (name == "pattern") {
@@ -128,6 +128,7 @@ AppActionParameterType inferParameterType(const std::string& name, const std::st
     }
     if (name == "value"
         || name == "velocity"
+        || name == "velocity_delta"
         || name == "gate"
         || name == "gate_rows"
         || name == "spacing"
@@ -138,6 +139,11 @@ AppActionParameterType inferParameterType(const std::string& name, const std::st
     if (name == "row"
         || name == "track"
         || name == "index"
+        || name == "octave"
+        || name == "semitones"
+        || name == "repeats"
+        || name == "row_spacing"
+        || name == "track_spacing"
         || name == "instrument"
         || name == "source_index"
         || name == "count"
@@ -153,10 +159,10 @@ AppActionParameterType inferParameterType(const std::string& name, const std::st
 
 std::vector<std::string> choicesForParameter(const std::string& name, const std::string& rawName) {
     if (name == "oscillator") {
-        return {"A", "B", "C"};
+        return {"A", "B", "C", "D"};
     }
     if (name == "wave") {
-        return {"sine", "square", "saw", "triangle", "noise"};
+        return {"sine", "square", "saw", "triangle", "noise", "supersaw", "sup"};
     }
     if (name == "scale") {
         return {"major", "minor", "pentatonic", "chromatic"};
@@ -184,6 +190,12 @@ void applyParameterBounds(AppActionParameter& parameter) {
         parameter.minimum = 20.0;
         parameter.hasMaximum = true;
         parameter.maximum = 300.0;
+    }
+    if (parameter.name == "octave") {
+        parameter.hasMinimum = true;
+        parameter.minimum = 0.0;
+        parameter.hasMaximum = true;
+        parameter.maximum = 8.0;
     }
 }
 
@@ -1485,7 +1497,7 @@ AppActionResult executeAppAction(ApplicationSession& session, const AppActionReq
     }
 
     if (request.actionId == "project.new") {
-        copyOperationResult(result, session.newProject(makeDemoSong()), true);
+        copyOperationResult(result, session.newProject(makeBlankSong()), true);
     } else if (request.actionId == "project.open") {
         copyOperationResult(result, session.loadProjectFile(requestPath), true);
         result.shouldOfferRecovery = result.lifecyclePlan.shouldOfferRecovery;
@@ -1494,7 +1506,7 @@ AppActionResult executeAppAction(ApplicationSession& session, const AppActionReq
     } else if (request.actionId == "project.save_as") {
         copyOperationResult(result, session.saveProjectFileAs(requestPath), false);
     } else if (request.actionId == "project.close") {
-        copyOperationResult(result, session.newProject(makeDemoSong()), true);
+        copyOperationResult(result, session.newProject(makeBlankSong()), true);
         if (result.ok) {
             result.message = "Closed project";
         }

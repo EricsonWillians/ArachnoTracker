@@ -46,6 +46,8 @@ int waveformToIndex(Waveform waveform) {
             return 3;
         case Waveform::Noise:
             return 4;
+        case Waveform::SuperSaw:
+            return 5;
     }
     return 2;
 }
@@ -62,6 +64,8 @@ Waveform waveformFromIndex(int value) {
             return Waveform::Triangle;
         case 4:
             return Waveform::Noise;
+        case 5:
+            return Waveform::SuperSaw;
         default:
             return Waveform::Saw;
     }
@@ -192,6 +196,32 @@ void saveProject(const Song& song, const std::string& path) {
             << " " << patch.transientBurstSpacing
             << " " << patch.transientBurstDecay
             << " " << patch.transientTone
+            << " " << patch.fmAlgorithm
+            << " " << patch.filterMode
+            << " " << patch.filterDrive
+            << " " << patch.filterKeytrack
+            << " " << patch.analogColor
+            << " " << patch.toneTilt
+            << " " << patch.oscALevel
+            << " " << patch.oscBLevel
+            << " " << patch.oscCLevel
+            << " " << patch.oscDLevel
+            << " " << patch.oscADetuneCents
+            << " " << patch.oscBDetuneCents
+            << " " << patch.oscCDetuneCents
+            << " " << patch.oscDDetuneCents
+            << " " << patch.oscAPulseWidth
+            << " " << patch.oscBPulseWidth
+            << " " << patch.oscCPulseWidth
+            << " " << patch.oscDPulseWidth
+            << " " << patch.oscAPwmDepth
+            << " " << patch.oscBPwmDepth
+            << " " << patch.oscCPwmDepth
+            << " " << patch.oscDPwmDepth
+            << " " << patch.oscADrive
+            << " " << patch.oscBDrive
+            << " " << patch.oscCDrive
+            << " " << patch.oscDDrive
             << "\n";
     }
 
@@ -400,6 +430,32 @@ Song loadProject(const std::string& path) {
             >> patch.transientBurstSpacing
             >> patch.transientBurstDecay
             >> patch.transientTone);
+        (void)(extraIn >> patch.fmAlgorithm
+            >> patch.filterMode
+            >> patch.filterDrive
+            >> patch.filterKeytrack
+            >> patch.analogColor
+            >> patch.toneTilt);
+        (void)(extraIn >> patch.oscALevel
+            >> patch.oscBLevel
+            >> patch.oscCLevel
+            >> patch.oscDLevel
+            >> patch.oscADetuneCents
+            >> patch.oscBDetuneCents
+            >> patch.oscCDetuneCents
+            >> patch.oscDDetuneCents
+            >> patch.oscAPulseWidth
+            >> patch.oscBPulseWidth
+            >> patch.oscCPulseWidth
+            >> patch.oscDPulseWidth
+            >> patch.oscAPwmDepth
+            >> patch.oscBPwmDepth
+            >> patch.oscCPwmDepth
+            >> patch.oscDPwmDepth
+            >> patch.oscADrive
+            >> patch.oscBDrive
+            >> patch.oscCDrive
+            >> patch.oscDDrive);
         patch.oscillatorC = waveformFromIndex(oscCIndex);
         patch.oscillatorD = waveformFromIndex(oscDIndex);
         patch.oscillatorAEnabled = oscAEnabled >= 0.5;

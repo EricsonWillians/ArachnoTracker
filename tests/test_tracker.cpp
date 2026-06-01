@@ -37,6 +37,7 @@
 #include "ProjectLifecycle.h"
 #include "RealtimePlayback.h"
 #include "ScriptIntegration.h"
+#include "StepEffects.h"
 #include "Tracker.h"
 
 void testRenderDemoSong();
@@ -174,6 +175,259 @@ void testRealtimePlaybackContract() {
     playback.stop();
     assert(playback.snapshot().state == arachno::TransportState::Stopped);
     assert(playback.snapshot().position.absoluteRow == 4.0);
+}
+
+void testSynthParameterSurface() {
+    arachno::SynthPatch patch;
+    const std::vector<std::pair<std::string, double>> parameters {
+        {"osc_a_enabled", 1.0},
+        {"osc_b_enabled", 0.0},
+        {"osc_c_enabled", 1.0},
+        {"osc_d_enabled", 0.0},
+        {"oscillator_mix", 0.37},
+        {"oscillator_c_mix", 0.41},
+        {"oscillator_d_mix", 0.29},
+        {"osc_a_level", 0.82},
+        {"osc_b_level", 0.68},
+        {"osc_c_level", 0.52},
+        {"osc_d_level", 0.43},
+        {"detune_cents", 9.0},
+        {"detune_c_cents", -7.0},
+        {"detune_d_cents", 6.0},
+        {"osc_a_detune_cents", 4.0},
+        {"osc_b_detune_cents", -3.0},
+        {"osc_c_detune_cents", 8.0},
+        {"osc_d_detune_cents", -9.0},
+        {"pulse_width", 0.34},
+        {"osc_a_pulse_width", 0.32},
+        {"osc_b_pulse_width", 0.41},
+        {"osc_c_pulse_width", 0.52},
+        {"osc_d_pulse_width", 0.63},
+        {"pwm_depth", 0.27},
+        {"osc_a_pwm_depth", 0.22},
+        {"osc_b_pwm_depth", 0.19},
+        {"osc_c_pwm_depth", 0.31},
+        {"osc_d_pwm_depth", 0.44},
+        {"fm_enabled", 1.0},
+        {"fm_amount", 0.39},
+        {"fm_ratio", 3.2},
+        {"fm_feedback", 0.41},
+        {"fm_algorithm", 2.0},
+        {"chorus_enabled", 1.0},
+        {"chorus_mix", 0.28},
+        {"chorus_rate", 0.66},
+        {"chorus_depth", 0.42},
+        {"unison_voices", 4.0},
+        {"unison_detune_cents", 14.0},
+        {"stereo_spread", 0.71},
+        {"sub_enabled", 1.0},
+        {"sub_oscillator", 0.38},
+        {"noise_enabled", 1.0},
+        {"noise", 0.12},
+        {"noise_tone", 0.69},
+        {"cutoff", 0.84},
+        {"resonance", 0.36},
+        {"filter_mode", 2.0},
+        {"filter_drive", 0.24},
+        {"filter_keytrack", 0.53},
+        {"filter_envelope", 0.46},
+        {"lfo_filter_depth", 0.35},
+        {"lfo_pan_depth", 0.28},
+        {"pitch_envelope_semitones", 11.0},
+        {"pitch_envelope_decay", 0.14},
+        {"lfo_rate", 4.8},
+        {"vibrato_cents", 24.0},
+        {"tremolo_depth", 0.22},
+        {"ring_enabled", 1.0},
+        {"ring_mod", 0.31},
+        {"hard_sync_enabled", 1.0},
+        {"hard_sync", 0.52},
+        {"drive", 0.47},
+        {"osc_a_drive", 0.26},
+        {"osc_b_drive", 0.34},
+        {"osc_c_drive", 0.18},
+        {"osc_d_drive", 0.41},
+        {"wavefold", 0.29},
+        {"bit_crush_enabled", 1.0},
+        {"bit_crush", 0.37},
+        {"sample_rate_reduction", 0.21},
+        {"comb_mix", 0.33},
+        {"comb_time", 0.09},
+        {"comb_feedback", 0.42},
+        {"high_pass", 0.18},
+        {"click", 0.14},
+        {"transient_shape", 0.35},
+        {"transient_noise", 0.28},
+        {"transient_pitch_semitones", 9.0},
+        {"transient_pitch_decay", 0.03},
+        {"transient_burst_count", 4.0},
+        {"transient_burst_spacing", 0.004},
+        {"transient_burst_decay", 0.64},
+        {"transient_tone", 0.77},
+        {"transient_decay", 0.04},
+        {"analog_color", 0.58},
+        {"tone_tilt", -0.24},
+        {"gain", 0.67},
+        {"pan", -0.37},
+        {"amp_attack", 0.012},
+        {"amp_decay", 0.18},
+        {"amp_sustain", 0.61},
+        {"amp_release", 0.27},
+        {"sustain_hold", 0.45},
+        {"filter_attack", 0.01},
+        {"filter_decay", 0.16},
+        {"filter_sustain", 0.58},
+        {"filter_release", 0.24},
+    };
+    for (const auto& [name, value] : parameters) {
+        assert(arachno::setSynthPatchParameter(patch, name, value));
+    }
+    assert(!arachno::setSynthPatchParameter(patch, "totally_unknown_param", 0.5));
+}
+
+void testSynthStereoAndHeadroom() {
+    auto peakAndBalance = [](const arachno::RenderedAudio& clip) {
+        double peak = 0.0;
+        double sumLeft = 0.0;
+        double sumRight = 0.0;
+        double sideMetric = 0.0;
+        for (std::size_t i = 0; i + 1 < clip.interleavedStereo.size(); i += 2) {
+            const double left = std::abs(static_cast<double>(clip.interleavedStereo[i]));
+            const double right = std::abs(static_cast<double>(clip.interleavedStereo[i + 1]));
+            peak = std::max(peak, std::max(left, right));
+            sumLeft += left;
+            sumRight += right;
+            sideMetric += std::abs(left - right);
+        }
+        return std::array<double, 4> {
+            peak,
+            sumLeft,
+            sumRight,
+            sideMetric / std::max<std::size_t>(1, clip.frameCount())};
+    };
+
+    arachno::RealtimePlaybackSession playback(48000);
+    arachno::SynthPatch base;
+    base.oscillatorAEnabled = true;
+    base.oscillatorBEnabled = false;
+    base.oscillatorCEnabled = false;
+    base.oscillatorDEnabled = false;
+    base.oscillatorA = arachno::Waveform::Saw;
+    base.fmEnabled = false;
+    base.ringEnabled = false;
+    base.hardSyncEnabled = false;
+    base.chorusEnabled = false;
+    base.bitCrushEnabled = false;
+    base.noiseEnabled = false;
+    base.subEnabled = false;
+    base.unisonVoices = 1;
+    base.stereoSpread = 0.0;
+    base.gain = 0.7;
+    base.pan = 0.0;
+
+    arachno::AuditionRequest req;
+    req.note = arachno::Note(arachno::noteNameToMidi("C3"), 1.0f);
+    req.patch = base;
+    req.gateSeconds = 0.3;
+
+    arachno::SynthPatch hardLeft = base;
+    hardLeft.pan = -1.0;
+    req.patch = hardLeft;
+    const arachno::RenderedAudio leftClip = playback.renderAuditionClip(req, 0.4);
+    const std::array<double, 4> leftMetrics = peakAndBalance(leftClip);
+    assert(leftMetrics[1] > leftMetrics[2] * 1.25);
+
+    arachno::SynthPatch hardRight = base;
+    hardRight.pan = 1.0;
+    req.patch = hardRight;
+    const arachno::RenderedAudio rightClip = playback.renderAuditionClip(req, 0.4);
+    const std::array<double, 4> rightMetrics = peakAndBalance(rightClip);
+    assert(rightMetrics[2] > rightMetrics[1] * 1.25);
+
+    arachno::SynthPatch noSpread = base;
+    noSpread.unisonVoices = 5;
+    noSpread.unisonDetuneCents = 16.0;
+    noSpread.stereoSpread = 0.0;
+    req.patch = noSpread;
+    const arachno::RenderedAudio monoClip = playback.renderAuditionClip(req, 0.4);
+    const std::array<double, 4> monoMetrics = peakAndBalance(monoClip);
+
+    arachno::SynthPatch wideSpread = noSpread;
+    wideSpread.stereoSpread = 1.0;
+    req.patch = wideSpread;
+    const arachno::RenderedAudio wideClip = playback.renderAuditionClip(req, 0.4);
+    const std::array<double, 4> wideMetrics = peakAndBalance(wideClip);
+    assert(wideMetrics[3] > monoMetrics[3] * 1.35);
+
+    arachno::SynthPatch hot = base;
+    hot.oscillatorBEnabled = true;
+    hot.oscillatorCEnabled = true;
+    hot.oscillatorDEnabled = true;
+    hot.oscillatorB = arachno::Waveform::SuperSaw;
+    hot.oscillatorC = arachno::Waveform::Square;
+    hot.oscillatorD = arachno::Waveform::Saw;
+    hot.oscBLevel = 1.0;
+    hot.oscCLevel = 1.0;
+    hot.oscDLevel = 1.0;
+    hot.drive = 0.9;
+    hot.gain = 1.0;
+    hot.unisonVoices = 6;
+    hot.unisonDetuneCents = 18.0;
+    req.patch = hot;
+    const arachno::RenderedAudio hotClip = playback.renderAuditionClip(req, 0.4);
+    const std::array<double, 4> hotMetrics = peakAndBalance(hotClip);
+    assert(hotMetrics[0] <= 0.9995);
+}
+
+void testSynthEnvelopeGateRelease() {
+    arachno::RealtimePlaybackSession playback(48000);
+    arachno::SynthPatch patch;
+    patch.oscillatorAEnabled = true;
+    patch.oscillatorBEnabled = false;
+    patch.oscillatorCEnabled = false;
+    patch.oscillatorDEnabled = false;
+    patch.oscillatorA = arachno::Waveform::Sine;
+    patch.fmEnabled = false;
+    patch.ringEnabled = false;
+    patch.hardSyncEnabled = false;
+    patch.chorusEnabled = false;
+    patch.bitCrushEnabled = false;
+    patch.noiseEnabled = false;
+    patch.subEnabled = false;
+    patch.gain = 0.85;
+    patch.ampEnvelope.attack = 0.40;
+    patch.ampEnvelope.decay = 0.08;
+    patch.ampEnvelope.sustain = 0.80;
+    patch.ampEnvelope.release = 0.06;
+
+    arachno::AuditionRequest request;
+    request.note = arachno::Note(arachno::noteNameToMidi("C4"), 1.0f);
+    request.patch = patch;
+    request.gateSeconds = 0.02;
+    const arachno::RenderedAudio clip = playback.renderAuditionClip(request, 0.45);
+    assert(clip.sampleRate == 48000);
+
+    const int earlyStart = static_cast<int>(clip.sampleRate * 0.02);
+    const int earlyEnd = static_cast<int>(clip.sampleRate * 0.10);
+    const int lateStart = static_cast<int>(clip.sampleRate * 0.24);
+    const int lateEnd = static_cast<int>(clip.sampleRate * 0.34);
+
+    double earlyPeak = 0.0;
+    double latePeak = 0.0;
+    for (int frame = earlyStart; frame < earlyEnd && frame < static_cast<int>(clip.frameCount()); ++frame) {
+        const std::size_t idx = static_cast<std::size_t>(frame) * 2;
+        earlyPeak = std::max(earlyPeak, std::max(
+            std::abs(static_cast<double>(clip.interleavedStereo[idx])),
+            std::abs(static_cast<double>(clip.interleavedStereo[idx + 1]))));
+    }
+    for (int frame = lateStart; frame < lateEnd && frame < static_cast<int>(clip.frameCount()); ++frame) {
+        const std::size_t idx = static_cast<std::size_t>(frame) * 2;
+        latePeak = std::max(latePeak, std::max(
+            std::abs(static_cast<double>(clip.interleavedStereo[idx])),
+            std::abs(static_cast<double>(clip.interleavedStereo[idx + 1]))));
+    }
+    assert(earlyPeak > 0.001);
+    assert(latePeak < earlyPeak * 0.18);
 }
 
 void testAudioRuntimeContract() {
@@ -540,7 +794,7 @@ void testFileCompatibilityInspection() {
     assert(patchReport.kind == arachno::TrackerFileKind::Patch);
     assert(patchReport.compatible);
     assert(patchReport.loadable);
-    assert(patchReport.version == arachno::patchFileVersion);
+    assert(patchReport.version == 1);
 
     {
         std::ofstream out(futureProject);
@@ -2433,6 +2687,30 @@ void testStepEffects() {
     assert(song.patterns.front().step(0, 1).effects.size() == 2);
     editor.applyCommand("fx-clear *");
     assert(song.patterns.front().step(0, 1).effects.empty());
+
+    editor.applyCommand("fx delay 0.40");
+    editor.applyCommand("fxp delay time 0.22");
+    editor.applyCommand("fxp delay feedback 0.66");
+    editor.applyCommand("fx reverb 0.35");
+    editor.applyCommand("fxp reverb size 0.75");
+    editor.applyCommand("fxp reverb damping 0.40");
+    editor.applyCommand("fx chorus 0.30");
+    editor.applyCommand("fxp chorus rate 0.70");
+    editor.applyCommand("fxp chorus depth 0.52");
+
+    arachno::StepSynthesisState state;
+    const arachno::PatternStep& fxStep = song.patterns.front().step(0, 1);
+    state.note = fxStep.note.value_or(arachno::Note(60, 0.8f));
+    state.patch = song.instruments[static_cast<std::size_t>(std::max(0, fxStep.instrument))].patch;
+    state.gateRows = fxStep.gate;
+    state.pan = 0.0;
+    const bool applied = arachno::applyStepSynthesisState(fxStep, state);
+    assert(applied);
+    assert(state.patch.combMix > 0.15);
+    assert(state.patch.combFeedback > 0.5);
+    assert(state.patch.chorusEnabled);
+    assert(state.patch.chorusMix > 0.1);
+    assert(state.patch.chorusDepth > 0.2);
 }
 
 void testMidiImport() {
@@ -3185,6 +3463,9 @@ int main() {
     testWavExport();
     testTrackStemRendering();
     testRealtimePlaybackContract();
+    testSynthParameterSurface();
+    testSynthStereoAndHeadroom();
+    testSynthEnvelopeGateRelease();
     testAudioRuntimeContract();
     testApplicationSessionState();
     testAppSettingsPersistence();

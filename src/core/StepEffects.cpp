@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace arachno {
 
@@ -34,6 +36,109 @@ bool readMainValue(const EffectCommand& effect, double& value) {
     }
     return false;
 }
+
+std::optional<double> findParameterValue(
+    const EffectCommand& effect,
+    const std::vector<std::string>& names) {
+    for (const auto& [rawName, rawValue] : effect.parameters) {
+        const std::string normalized = lowerCopy(rawName);
+        for (const std::string& candidate : names) {
+            if (normalized == candidate) {
+                return rawValue;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+double normalizedToRange(double value, double minimum, double maximum) {
+    if (value >= 0.0 && value <= 1.0) {
+        return minimum + (maximum - minimum) * value;
+    }
+    return std::clamp(value, minimum, maximum);
+}
+
+bool applyChorusEffectAlias(const EffectCommand& effect, StepSynthesisState& state) {
+    bool touched = false;
+    if (const auto mix = findParameterValue(effect, {"value", "mix", "amount", "wet"}); mix.has_value()) {
+        state.patch.chorusMix = clamp01(*mix);
+        touched = true;
+    }
+    if (const auto rate = findParameterValue(effect, {"rate", "speed"}); rate.has_value()) {
+        state.patch.chorusRate = normalizedToRange(*rate, 0.05, 5.0);
+        touched = true;
+    }
+    if (const auto depth = findParameterValue(effect, {"depth"}); depth.has_value()) {
+        state.patch.chorusDepth = clamp01(*depth);
+        touched = true;
+    }
+    if (touched) {
+        state.patch.chorusEnabled = state.patch.chorusMix > 0.0001;
+    }
+    return touched;
+}
+
+bool applyDelayEffectAlias(const EffectCommand& effect, StepSynthesisState& state) {
+    bool touched = false;
+    if (const auto mix = findParameterValue(effect, {"value", "mix", "amount", "wet"}); mix.has_value()) {
+        state.patch.combMix = clamp01(*mix);
+        touched = true;
+    }
+    if (const auto time = findParameterValue(effect, {"time", "delay_time", "seconds"}); time.has_value()) {
+        state.patch.combTime = normalizedToRange(*time, 0.01, 0.55);
+        touched = true;
+    }
+    if (const auto feedback = findParameterValue(effect, {"feedback", "fb"}); feedback.has_value()) {
+        state.patch.combFeedback = clamp01(*feedback);
+        touched = true;
+    }
+    if (const auto tone = findParameterValue(effect, {"tone", "damping", "damp"}); tone.has_value()) {
+        const double damp = clamp01(*tone);
+        state.patch.cutoff = std::clamp(0.98 - damp * 0.62, 0.2, 1.0);
+        touched = true;
+    }
+    return touched;
+}
+
+bool applyReverbEffectAlias(const EffectCommand& effect, StepSynthesisState& state) {
+    bool touched = false;
+    const double mix = clamp01(findParameterValue(effect, {"value", "mix", "amount", "wet"}).value_or(0.0));
+    const double size = clamp01(findParameterValue(effect, {"size", "room"}).value_or(mix));
+    const double damp = clamp01(findParameterValue(effect, {"damping", "damp"}).value_or(0.45));
+    const double width = clamp01(findParameterValue(effect, {"width", "stereo"}).value_or(0.6));
+
+    if (findParameterValue(effect, {"value", "mix", "amount", "wet"}).has_value()) {
+        state.patch.combMix = std::max(state.patch.combMix, mix * 0.78);
+        state.patch.chorusMix = std::max(state.patch.chorusMix, mix * 0.46);
+        state.patch.chorusEnabled = state.patch.chorusMix > 0.0001;
+        touched = true;
+    }
+    if (findParameterValue(effect, {"size", "room"}).has_value()) {
+        state.patch.combTime = normalizedToRange(size, 0.03, 0.8);
+        touched = true;
+    }
+    if (findParameterValue(effect, {"damping", "damp"}).has_value()) {
+        state.patch.cutoff = std::clamp(0.96 - damp * 0.68, 0.18, 1.0);
+        state.patch.toneTilt = std::clamp(state.patch.toneTilt - damp * 0.32, -1.0, 1.0);
+        touched = true;
+    }
+    if (findParameterValue(effect, {"width", "stereo"}).has_value()) {
+        state.patch.stereoSpread = std::max(state.patch.stereoSpread, width);
+        touched = true;
+    }
+    if (touched) {
+        state.patch.combFeedback = std::clamp(
+            std::max(state.patch.combFeedback, 0.35 + size * 0.52) * (0.76 + mix * 0.24),
+            0.0,
+            0.985);
+        state.patch.chorusDepth = std::clamp(
+            std::max(state.patch.chorusDepth, 0.12 + mix * 0.52 + size * 0.2),
+            0.0,
+            1.0);
+        state.patch.chorusRate = std::clamp(0.1 + (1.0 - damp) * 0.45, 0.05, 5.0);
+    }
+    return touched;
+}
 } // namespace
 
 std::string normalizeStepEffectName(const std::string& name) {
@@ -52,7 +157,10 @@ bool isKnownStepEffectCommand(const EffectCommand& effect) {
         || name == "gate_scale"
         || name == "micro"
         || name == "transpose"
-        || name == "mute") {
+        || name == "mute"
+        || name == "chorus"
+        || name == "delay"
+        || name == "reverb") {
         return true;
     }
 
@@ -133,6 +241,24 @@ bool applyStepSynthesisState(const PatternStep& step, StepSynthesisState& state)
                 return false;
             }
             state.pan = std::clamp(value, -1.0, 1.0);
+            continue;
+        }
+        if (name == "chorus") {
+            if (!applyChorusEffectAlias(effect, state)) {
+                return false;
+            }
+            continue;
+        }
+        if (name == "delay") {
+            if (!applyDelayEffectAlias(effect, state)) {
+                return false;
+            }
+            continue;
+        }
+        if (name == "reverb") {
+            if (!applyReverbEffectAlias(effect, state)) {
+                return false;
+            }
             continue;
         }
         if (hasMainValue && setSynthPatchParameter(state.patch, name, value)) {
