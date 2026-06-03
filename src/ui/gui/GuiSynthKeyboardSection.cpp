@@ -123,7 +123,13 @@ int drawSynthKeyboardSection(const GuiSynthKeyboardSectionContext& context) {
     context.drawText(infoTextX, infoPanel.y + 78, context.fitText("Mouse click/drag = preview", infoTextW), context.colors.mutedText);
     context.drawText(infoTextX, infoPanel.y + 94, context.fitText("Z..M/Q..U + Enter/Space", infoTextW), context.colors.mutedText);
     context.drawText(infoTextX, infoPanel.y + 110, context.fitText("Octave: [ ] or - + or Ctrl+0..8", infoTextW), context.colors.mutedText);
-    context.drawText(infoTextX, infoPanel.y + 126, context.fitText(context.midiStatusText, infoTextW), context.colors.mutedText);
+    // Show polyphony count and unison info
+    std::string polyInfo = "Poly: " + std::to_string(context.previewNotes.size());
+    if (context.previewNotes.size() > 1) {
+        polyInfo += " notes";
+    }
+    context.drawText(infoTextX, infoPanel.y + 126, context.fitText(polyInfo, infoTextW), context.colors.text);
+    context.drawText(infoTextX, infoPanel.y + 142, context.fitText(context.midiStatusText, infoTextW), context.colors.mutedText);
 
     return std::max(
         context.keyboardTop + whiteKeyHeight + 22,

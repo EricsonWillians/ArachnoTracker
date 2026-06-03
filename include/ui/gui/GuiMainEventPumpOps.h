@@ -50,6 +50,7 @@ struct GuiMainEventPumpContext {
 
     std::function<GuiMainMotionContext(int, int, unsigned int)> makeMainMotionContext;
     std::function<GuiMainMotionResult(const GuiMainMotionContext&)> handleMainMotionNotify;
+    std::function<void()> serviceRealtimeAudio;
 
     std::function<int()> playbackSampleRate;
     std::function<GuiMainButtonPressContextFactoryInput()> makeButtonPressFactoryInput;

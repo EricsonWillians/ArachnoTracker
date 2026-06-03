@@ -3,6 +3,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -41,6 +42,7 @@ void savePatch(const SynthPatch& patch, const std::string& path) {
     if (!out) {
         throw std::runtime_error("failed to open patch for writing: " + path);
     }
+    out << std::setprecision(std::numeric_limits<double>::max_digits10);
 
     out << "arachno_patch " << patchFileVersion << "\n";
     out << "name " << std::quoted(patch.name) << "\n";
@@ -70,6 +72,9 @@ void savePatch(const SynthPatch& patch, const std::string& path) {
         << " " << patch.chorusMix
         << " " << patch.chorusRate
         << " " << patch.chorusDepth
+        << " " << patch.chorusFeedback
+        << " " << patch.chorusDelay
+        << " " << patch.chorusWidth
         << " " << patch.unisonVoices
         << " " << patch.unisonDetuneCents
         << " " << patch.stereoSpread
@@ -103,6 +108,14 @@ void savePatch(const SynthPatch& patch, const std::string& path) {
         << " " << patch.combMix
         << " " << patch.combTime
         << " " << patch.combFeedback
+        << " " << patch.delayMix
+        << " " << patch.delayTime
+        << " " << patch.delayFeedback
+        << " " << patch.delayTone
+        << " " << patch.reverbMix
+        << " " << patch.reverbSize
+        << " " << patch.reverbDamping
+        << " " << patch.reverbPreDelay
         << " " << patch.highPass
         << " " << patch.click
         << " " << patch.transientShape
@@ -115,6 +128,8 @@ void savePatch(const SynthPatch& patch, const std::string& path) {
         << " " << patch.transientTone
         << " " << patch.transientDecay
         << " " << patch.analogColor
+        << " " << patch.vintageDrift
+        << " " << patch.wowFlutter
         << " " << patch.toneTilt
         << " " << patch.gain
         << " " << patch.pan
@@ -138,6 +153,50 @@ void savePatch(const SynthPatch& patch, const std::string& path) {
         << " " << patch.oscBDrive
         << " " << patch.oscCDrive
         << " " << patch.oscDDrive
+        << " " << patch.chorusEnsemble
+        << " " << patch.delayStereo
+        << " " << patch.delayModDepth
+        << " " << patch.delayDrive
+        << " " << patch.delayDucking
+        << " " << patch.reverbDiffusion
+        << " " << patch.reverbWidth
+        << " " << patch.reverbShimmer
+        << " " << patch.reverbModDepth
+        << " " << patch.tapeColor
+        << " " << patch.airBoost
+        << " " << patch.lowPunch
+        << " " << patch.analogWarmth
+        << " " << patch.voiceSlop
+        << " " << patch.phaseScatter
+        << " " << patch.chorusTone
+        << " " << patch.delayDiffusion
+        << " " << patch.reverbDecay
+        << " " << patch.reverbEarlyMix
+        << " " << patch.consoleCrosstalk
+        << " " << patch.outputGlue
+        << " " << patch.unisonWarp
+        << " " << patch.unisonHumanize
+        << " " << patch.fmColor
+        << " " << patch.fmSpread
+        << " " << patch.chorusJitter
+        << " " << patch.chorusSaturation
+        << " " << patch.delayWow
+        << " " << patch.delayCrossfeed
+        << " " << patch.reverbTone
+        << " " << patch.reverbChorus
+        << " " << patch.reverbBloom
+        << " " << patch.stereoDepth
+        << " " << patch.hifiExciter
+        << " " << patch.outputTransformer
+        << " " << patch.outputSoftClip
+        << " " << patch.velocityToAmp
+        << " " << patch.velocityToFilter
+        << " " << patch.velocityToAttack
+        << " " << patch.velocityCurve
+        << " " << patch.filterKeytrackResonance
+        << " " << patch.filterNonlinearity
+        << " " << patch.ampEnvelopeCurve
+        << " " << patch.filterEnvelopeCurve
         << "\n";
     out << "amp"
         << " " << patch.ampEnvelope.attack
@@ -215,77 +274,152 @@ SynthPatch loadPatch(const std::string& path) {
         patch.fmFeedback = params[15];
         patch.fmAlgorithm = static_cast<int>(std::lround(params[16]));
         patch.chorusEnabled = params[17] >= 0.5;
+        const std::size_t chorusFeedbackOffset = params.size() >= 102 ? 3u : 0u;
+        const std::size_t delayFxOffset = params.size() >= 102 ? 11u : 0u;
+        const std::size_t vintageOffset = params.size() >= 102 ? 2u : 0u;
+
         patch.chorusMix = params[18];
         patch.chorusRate = params[19];
         patch.chorusDepth = params[20];
-        patch.unisonVoices = static_cast<int>(std::lround(params[21]));
-        patch.unisonDetuneCents = params[22];
-        patch.stereoSpread = params[23];
-        patch.subEnabled = params[24] >= 0.5;
-        patch.subOscillator = params[25];
-        patch.noiseEnabled = params[26] >= 0.5;
-        patch.noise = params[27];
-        patch.noiseTone = params[28];
-        patch.cutoff = params[29];
-        patch.resonance = params[30];
-        patch.filterMode = static_cast<int>(std::lround(params[31]));
-        patch.filterDrive = params[32];
-        patch.filterKeytrack = params[33];
-        patch.filterEnvelopeAmount = params[34];
-        patch.lfoFilterDepth = params[35];
-        patch.lfoPanDepth = params[36];
-        patch.pitchEnvelopeSemitones = params[37];
-        patch.pitchEnvelopeDecay = params[38];
-        patch.lfoRate = params[39];
-        patch.vibratoCents = params[40];
-        patch.tremoloDepth = params[41];
-        patch.ringEnabled = params[42] >= 0.5;
-        patch.ringMod = params[43];
-        patch.hardSyncEnabled = params[44] >= 0.5;
-        patch.hardSync = params[45];
-        patch.drive = params[46];
-        patch.wavefold = params[47];
-        patch.bitCrushEnabled = params[48] >= 0.5;
-        patch.bitCrush = params[49];
-        patch.sampleRateReduction = params[50];
-        patch.combMix = params[51];
-        patch.combTime = params[52];
-        patch.combFeedback = params[53];
-        patch.highPass = params[54];
-        patch.click = params[55];
-        patch.transientShape = params[56];
-        patch.transientNoise = params[57];
-        patch.transientPitchSemitones = params[58];
-        patch.transientPitchDecay = params[59];
-        patch.transientBurstCount = static_cast<int>(std::lround(params[60]));
-        patch.transientBurstSpacing = params[61];
-        patch.transientBurstDecay = params[62];
-        patch.transientTone = params[63];
-        patch.transientDecay = params[64];
-        patch.analogColor = params[65];
-        patch.toneTilt = params[66];
-        patch.gain = params[67];
-        patch.pan = params[68];
-        patch.oscALevel = params[69];
-        patch.oscBLevel = params[70];
-        patch.oscCLevel = params[71];
-        patch.oscDLevel = params[72];
-        patch.oscADetuneCents = params[73];
-        patch.oscBDetuneCents = params[74];
-        patch.oscCDetuneCents = params[75];
-        patch.oscDDetuneCents = params[76];
-        patch.oscAPulseWidth = params[77];
-        patch.oscBPulseWidth = params[78];
-        patch.oscCPulseWidth = params[79];
-        patch.oscDPulseWidth = params[80];
-        patch.oscAPwmDepth = params[81];
-        patch.oscBPwmDepth = params[82];
-        patch.oscCPwmDepth = params[83];
-        patch.oscDPwmDepth = params[84];
-        patch.oscADrive = params[85];
-        patch.oscBDrive = params[86];
-        patch.oscCDrive = params[87];
-        patch.oscDDrive = params[88];
+        if (params.size() >= 102) {
+            patch.chorusFeedback = params[21];
+            patch.chorusDelay = params[22];
+            patch.chorusWidth = params[23];
+        }
+        patch.unisonVoices = static_cast<int>(std::lround(params[21 + chorusFeedbackOffset]));
+        patch.unisonDetuneCents = params[22 + chorusFeedbackOffset];
+        patch.stereoSpread = params[23 + chorusFeedbackOffset];
+        patch.subEnabled = params[24 + chorusFeedbackOffset] >= 0.5;
+        patch.subOscillator = params[25 + chorusFeedbackOffset];
+        patch.noiseEnabled = params[26 + chorusFeedbackOffset] >= 0.5;
+        patch.noise = params[27 + chorusFeedbackOffset];
+        patch.noiseTone = params[28 + chorusFeedbackOffset];
+        patch.cutoff = params[29 + chorusFeedbackOffset];
+        patch.resonance = params[30 + chorusFeedbackOffset];
+        patch.filterMode = static_cast<int>(std::lround(params[31 + chorusFeedbackOffset]));
+        patch.filterDrive = params[32 + chorusFeedbackOffset];
+        patch.filterKeytrack = params[33 + chorusFeedbackOffset];
+        patch.filterEnvelopeAmount = params[34 + chorusFeedbackOffset];
+        patch.lfoFilterDepth = params[35 + chorusFeedbackOffset];
+        patch.lfoPanDepth = params[36 + chorusFeedbackOffset];
+        patch.pitchEnvelopeSemitones = params[37 + chorusFeedbackOffset];
+        patch.pitchEnvelopeDecay = params[38 + chorusFeedbackOffset];
+        patch.lfoRate = params[39 + chorusFeedbackOffset];
+        patch.vibratoCents = params[40 + chorusFeedbackOffset];
+        patch.tremoloDepth = params[41 + chorusFeedbackOffset];
+        patch.ringEnabled = params[42 + chorusFeedbackOffset] >= 0.5;
+        patch.ringMod = params[43 + chorusFeedbackOffset];
+        patch.hardSyncEnabled = params[44 + chorusFeedbackOffset] >= 0.5;
+        patch.hardSync = params[45 + chorusFeedbackOffset];
+        patch.drive = params[46 + chorusFeedbackOffset];
+        patch.wavefold = params[47 + chorusFeedbackOffset];
+        patch.bitCrushEnabled = params[48 + chorusFeedbackOffset] >= 0.5;
+        patch.bitCrush = params[49 + chorusFeedbackOffset];
+        patch.sampleRateReduction = params[50 + chorusFeedbackOffset];
+        patch.combMix = params[51 + chorusFeedbackOffset];
+        patch.combTime = params[52 + chorusFeedbackOffset];
+        patch.combFeedback = params[53 + chorusFeedbackOffset];
+        if (params.size() >= 102) {
+            patch.delayMix = params[57];
+            patch.delayTime = params[58];
+            patch.delayFeedback = params[59];
+            patch.delayTone = params[60];
+            patch.reverbMix = params[61];
+            patch.reverbSize = params[62];
+            patch.reverbDamping = params[63];
+            patch.reverbPreDelay = params[64];
+        }
+        patch.highPass = params[54 + delayFxOffset];
+        patch.click = params[55 + delayFxOffset];
+        patch.transientShape = params[56 + delayFxOffset];
+        patch.transientNoise = params[57 + delayFxOffset];
+        patch.transientPitchSemitones = params[58 + delayFxOffset];
+        patch.transientPitchDecay = params[59 + delayFxOffset];
+        patch.transientBurstCount = static_cast<int>(std::lround(params[60 + delayFxOffset]));
+        patch.transientBurstSpacing = params[61 + delayFxOffset];
+        patch.transientBurstDecay = params[62 + delayFxOffset];
+        patch.transientTone = params[63 + delayFxOffset];
+        patch.transientDecay = params[64 + delayFxOffset];
+        patch.analogColor = params[65 + delayFxOffset];
+        if (params.size() >= 102) {
+            patch.vintageDrift = params[66 + delayFxOffset];
+            patch.wowFlutter = params[67 + delayFxOffset];
+        }
+        patch.toneTilt = params[66 + delayFxOffset + vintageOffset];
+        patch.gain = params[67 + delayFxOffset + vintageOffset];
+        patch.pan = params[68 + delayFxOffset + vintageOffset];
+        patch.oscALevel = params[69 + delayFxOffset + vintageOffset];
+        patch.oscBLevel = params[70 + delayFxOffset + vintageOffset];
+        patch.oscCLevel = params[71 + delayFxOffset + vintageOffset];
+        patch.oscDLevel = params[72 + delayFxOffset + vintageOffset];
+        patch.oscADetuneCents = params[73 + delayFxOffset + vintageOffset];
+        patch.oscBDetuneCents = params[74 + delayFxOffset + vintageOffset];
+        patch.oscCDetuneCents = params[75 + delayFxOffset + vintageOffset];
+        patch.oscDDetuneCents = params[76 + delayFxOffset + vintageOffset];
+        patch.oscAPulseWidth = params[77 + delayFxOffset + vintageOffset];
+        patch.oscBPulseWidth = params[78 + delayFxOffset + vintageOffset];
+        patch.oscCPulseWidth = params[79 + delayFxOffset + vintageOffset];
+        patch.oscDPulseWidth = params[80 + delayFxOffset + vintageOffset];
+        patch.oscAPwmDepth = params[81 + delayFxOffset + vintageOffset];
+        patch.oscBPwmDepth = params[82 + delayFxOffset + vintageOffset];
+        patch.oscCPwmDepth = params[83 + delayFxOffset + vintageOffset];
+        patch.oscDPwmDepth = params[84 + delayFxOffset + vintageOffset];
+        patch.oscADrive = params[85 + delayFxOffset + vintageOffset];
+        patch.oscBDrive = params[86 + delayFxOffset + vintageOffset];
+        patch.oscCDrive = params[87 + delayFxOffset + vintageOffset];
+        patch.oscDDrive = params[88 + delayFxOffset + vintageOffset];
+        if (params.size() >= 114) {
+            patch.chorusEnsemble = params[102];
+            patch.delayStereo = params[103];
+            patch.delayModDepth = params[104];
+            patch.delayDrive = params[105];
+            patch.delayDucking = params[106];
+            patch.reverbDiffusion = params[107];
+            patch.reverbWidth = params[108];
+            patch.reverbShimmer = params[109];
+            patch.reverbModDepth = params[110];
+            patch.tapeColor = params[111];
+            patch.airBoost = params[112];
+            patch.lowPunch = params[113];
+            if (params.size() >= 123) {
+                patch.analogWarmth = params[114];
+                patch.voiceSlop = params[115];
+                patch.phaseScatter = params[116];
+                patch.chorusTone = params[117];
+                patch.delayDiffusion = params[118];
+                patch.reverbDecay = params[119];
+                patch.reverbEarlyMix = params[120];
+                patch.consoleCrosstalk = params[121];
+                patch.outputGlue = params[122];
+                if (params.size() >= 138) {
+                    patch.unisonWarp = params[123];
+                    patch.unisonHumanize = params[124];
+                    patch.fmColor = params[125];
+                    patch.fmSpread = params[126];
+                    patch.chorusJitter = params[127];
+                    patch.chorusSaturation = params[128];
+                    patch.delayWow = params[129];
+                    patch.delayCrossfeed = params[130];
+                    patch.reverbTone = params[131];
+                    patch.reverbChorus = params[132];
+                    patch.reverbBloom = params[133];
+                    patch.stereoDepth = params[134];
+                    patch.hifiExciter = params[135];
+                    patch.outputTransformer = params[136];
+                    patch.outputSoftClip = params[137];
+                    if (params.size() >= 146) {
+                        patch.velocityToAmp = params[138];
+                        patch.velocityToFilter = params[139];
+                        patch.velocityToAttack = params[140];
+                        patch.velocityCurve = static_cast<int>(std::lround(params[141]));
+                        patch.filterKeytrackResonance = params[142];
+                        patch.filterNonlinearity = params[143];
+                        patch.ampEnvelopeCurve = static_cast<int>(std::lround(params[144]));
+                        patch.filterEnvelopeCurve = static_cast<int>(std::lround(params[145]));
+                    }
+                }
+            }
+        }
     } else if (params.size() >= 69) {
         patch.oscillatorAEnabled = params[0] >= 0.5;
         patch.oscillatorBEnabled = params[1] >= 0.5;

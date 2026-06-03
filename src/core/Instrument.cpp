@@ -99,6 +99,14 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
         patch.chorusRate = value;
     } else if (name == "chorus_depth") {
         patch.chorusDepth = value;
+    } else if (name == "chorus_feedback" || name == "chorus_fb") {
+        patch.chorusFeedback = value;
+    } else if (name == "chorus_delay" || name == "chorus_pre_delay") {
+        patch.chorusDelay = value;
+    } else if (name == "chorus_width") {
+        patch.chorusWidth = value;
+    } else if (name == "chorus_ensemble" || name == "chorus_voice_spread") {
+        patch.chorusEnsemble = value;
     } else if (name == "unison" || name == "unison_voices") {
         patch.unisonVoices = static_cast<int>(std::lround(value));
     } else if (name == "unison_detune" || name == "unison_detune_cents") {
@@ -173,6 +181,38 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
         patch.combTime = value;
     } else if (name == "comb_feedback") {
         patch.combFeedback = value;
+    } else if (name == "delay_mix" || name == "delay") {
+        patch.delayMix = value;
+    } else if (name == "delay_time") {
+        patch.delayTime = value;
+    } else if (name == "delay_feedback" || name == "delay_fb") {
+        patch.delayFeedback = value;
+    } else if (name == "delay_tone" || name == "delay_damping") {
+        patch.delayTone = value;
+    } else if (name == "delay_stereo" || name == "delay_pingpong") {
+        patch.delayStereo = value;
+    } else if (name == "delay_mod_depth" || name == "delay_mod") {
+        patch.delayModDepth = value;
+    } else if (name == "delay_drive" || name == "delay_saturation") {
+        patch.delayDrive = value;
+    } else if (name == "delay_ducking" || name == "delay_duck") {
+        patch.delayDucking = value;
+    } else if (name == "reverb_mix" || name == "reverb") {
+        patch.reverbMix = value;
+    } else if (name == "reverb_size" || name == "reverb_room") {
+        patch.reverbSize = value;
+    } else if (name == "reverb_damping" || name == "reverb_damp") {
+        patch.reverbDamping = value;
+    } else if (name == "reverb_pre_delay" || name == "reverb_predelay") {
+        patch.reverbPreDelay = value;
+    } else if (name == "reverb_diffusion" || name == "reverb_diffuse") {
+        patch.reverbDiffusion = value;
+    } else if (name == "reverb_width" || name == "reverb_stereo_width") {
+        patch.reverbWidth = value;
+    } else if (name == "reverb_shimmer") {
+        patch.reverbShimmer = value;
+    } else if (name == "reverb_mod_depth" || name == "reverb_mod") {
+        patch.reverbModDepth = value;
     } else if (name == "highpass" || name == "high_pass") {
         patch.highPass = value;
     } else if (name == "click" || name == "transient_click") {
@@ -197,8 +237,66 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
         patch.transientDecay = value;
     } else if (name == "analog_color" || name == "analog") {
         patch.analogColor = value;
+    } else if (name == "vintage_drift" || name == "drift_amount") {
+        patch.vintageDrift = value;
+    } else if (name == "wow_flutter" || name == "flutter") {
+        patch.wowFlutter = value;
     } else if (name == "tone_tilt" || name == "tilt") {
         patch.toneTilt = value;
+    } else if (name == "tape_color" || name == "tape") {
+        patch.tapeColor = value;
+    } else if (name == "air_boost" || name == "air") {
+        patch.airBoost = value;
+    } else if (name == "low_punch" || name == "punch") {
+        patch.lowPunch = value;
+    } else if (name == "analog_warmth" || name == "warmth") {
+        patch.analogWarmth = value;
+    } else if (name == "voice_slop" || name == "slop") {
+        patch.voiceSlop = value;
+    } else if (name == "phase_scatter" || name == "phase_chaos") {
+        patch.phaseScatter = value;
+    } else if (name == "unison_warp" || name == "warp") {
+        patch.unisonWarp = value;
+    } else if (name == "unison_humanize" || name == "humanize") {
+        patch.unisonHumanize = value;
+    } else if (name == "fm_color" || name == "fm_tone") {
+        patch.fmColor = value;
+    } else if (name == "fm_spread") {
+        patch.fmSpread = value;
+    } else if (name == "chorus_tone") {
+        patch.chorusTone = value;
+    } else if (name == "chorus_jitter") {
+        patch.chorusJitter = value;
+    } else if (name == "chorus_saturation" || name == "chorus_sat") {
+        patch.chorusSaturation = value;
+    } else if (name == "delay_diffusion" || name == "delay_diffuse") {
+        patch.delayDiffusion = value;
+    } else if (name == "delay_wow") {
+        patch.delayWow = value;
+    } else if (name == "delay_crossfeed" || name == "delay_xfeed") {
+        patch.delayCrossfeed = value;
+    } else if (name == "reverb_decay" || name == "reverb_tail") {
+        patch.reverbDecay = value;
+    } else if (name == "reverb_early_mix" || name == "reverb_early") {
+        patch.reverbEarlyMix = value;
+    } else if (name == "reverb_tone") {
+        patch.reverbTone = value;
+    } else if (name == "reverb_chorus") {
+        patch.reverbChorus = value;
+    } else if (name == "reverb_bloom") {
+        patch.reverbBloom = value;
+    } else if (name == "console_crosstalk" || name == "crosstalk") {
+        patch.consoleCrosstalk = value;
+    } else if (name == "stereo_depth") {
+        patch.stereoDepth = value;
+    } else if (name == "hifi_exciter" || name == "exciter") {
+        patch.hifiExciter = value;
+    } else if (name == "output_transformer" || name == "transformer") {
+        patch.outputTransformer = value;
+    } else if (name == "output_soft_clip" || name == "soft_clip") {
+        patch.outputSoftClip = value;
+    } else if (name == "output_glue" || name == "glue") {
+        patch.outputGlue = value;
     } else if (name == "gain") {
         patch.gain = value;
     } else if (name == "pan") {

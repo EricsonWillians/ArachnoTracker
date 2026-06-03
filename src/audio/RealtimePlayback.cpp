@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 #include "StepEffects.h"
@@ -17,7 +18,7 @@ float safetySaturate(double value) {
         return static_cast<float>(value);
     }
     const double excess = magnitude - threshold;
-    const double softened = threshold + std::tanh(excess * 8.0) * 0.02;
+    const double softened = threshold + (excess / (1.0 + excess * 4.0)) * 0.02;
     return static_cast<float>(std::copysign(std::min(0.999, softened), value));
 }
 
@@ -95,10 +96,18 @@ RealtimePlaybackSession::RealtimePlaybackSession(int sampleRate)
 
 void RealtimePlaybackSession::setSong(const Song* song) {
     song_ = song;
+    const int trackCount = song_ != nullptr ? static_cast<int>(song_->tracks.size()) : 0;
+    if (static_cast<int>(trackFrameCountersScratch_.size()) < trackCount) {
+        trackFrameCountersScratch_.resize(static_cast<std::size_t>(trackCount), 0);
+        trackFrameStampsScratch_.resize(static_cast<std::size_t>(trackCount), -1);
+        trackSegmentCountersScratch_.resize(static_cast<std::size_t>(trackCount), 0);
+    }
     rebuildRowMap();
     rebuildPreparedEvents();
     preparedSignature_ = computePreparationSignature();
+    signatureCheckCooldownFrames_ = 0;
     playheadRows_ = clampRow(playheadRows_, totalRows());
+    syncPreparedEventCursor();
     resetMixBus();
     if (song_ == nullptr) {
         stop();
@@ -124,12 +133,14 @@ void RealtimePlaybackSession::pause() {
 void RealtimePlaybackSession::stop() {
     state_ = TransportState::Stopped;
     playheadRows_ = loop_.enabled ? loop_.startRow : 0.0;
+    syncPreparedEventCursor();
     synth_.reset();
     resetMixBus();
 }
 
 void RealtimePlaybackSession::seekRows(double absoluteRow) {
     playheadRows_ = clampRow(absoluteRow, totalRows());
+    syncPreparedEventCursor();
     synth_.reset();
     resetMixBus();
 }
@@ -352,11 +363,17 @@ void RealtimePlaybackSession::render(float* left, float* right, int sampleCount)
     std::fill(left, left + sampleCount, 0.0f);
     std::fill(right, right + sampleCount, 0.0f);
     if (song_ != nullptr) {
-        const std::uint64_t signature = computePreparationSignature();
-        if (signature != preparedSignature_) {
-            rebuildRowMap();
-            rebuildPreparedEvents();
-            preparedSignature_ = signature;
+        if (state_ != TransportState::Playing && signatureCheckCooldownFrames_ <= 0) {
+            const std::uint64_t signature = computePreparationSignature();
+            if (signature != preparedSignature_) {
+                rebuildRowMap();
+                rebuildPreparedEvents();
+                preparedSignature_ = signature;
+                syncPreparedEventCursor();
+            }
+            signatureCheckCooldownFrames_ = std::max(sampleRate_ / 5, 2048);
+        } else {
+            signatureCheckCooldownFrames_ = std::max(0, signatureCheckCooldownFrames_ - sampleCount);
         }
     }
 
@@ -379,10 +396,12 @@ void RealtimePlaybackSession::render(float* left, float* right, int sampleCount)
 
         if (loop_.enabled && playheadRows_ >= loop_.endRow) {
             playheadRows_ = loop_.startRow;
+            syncPreparedEventCursor();
             synth_.reset();
         } else if (playheadRows_ >= totalRows()) {
             state_ = TransportState::Stopped;
             playheadRows_ = totalRows();
+            syncPreparedEventCursor();
         }
     }
 
@@ -429,55 +448,334 @@ PlaybackPosition RealtimePlaybackSession::currentPosition() const {
 void RealtimePlaybackSession::renderSegment(float* left, float* right, int frameOffset, int frameCount) {
     const double startRow = playheadRows_;
     const double endRow = std::min(totalRows(), startRow + static_cast<double>(frameCount) / (secondsPerRow() * sampleRate_));
+    const auto cursorBegin = preparedEvents_.begin()
+        + static_cast<std::ptrdiff_t>(std::min(preparedEventCursor_, preparedEvents_.size()));
+    const auto end = std::lower_bound(
+        cursorBegin,
+        preparedEvents_.end(),
+        endRow,
+        [](const PreparedEvent& event, double row) { return event.row < row; });
+    const int eventCountThisSegment = static_cast<int>(std::distance(cursorBegin, end));
+    const int trackCountHint = song_ != nullptr ? static_cast<int>(song_->tracks.size()) : 0;
+    const double eventDensity = frameCount > 0
+        ? static_cast<double>(eventCountThisSegment) / static_cast<double>(frameCount)
+        : 0.0;
 
-    scratchEvents_.clear();
-    if (!preparedEvents_.empty()) {
-        const auto begin = std::lower_bound(
-            preparedEvents_.begin(),
-            preparedEvents_.end(),
-            startRow,
-            [](const PreparedEvent& event, double row) { return event.row < row; });
-        const auto end = std::lower_bound(
-            begin,
-            preparedEvents_.end(),
-            endRow,
-            [](const PreparedEvent& event, double row) { return event.row < row; });
-        scratchEvents_.reserve(static_cast<std::size_t>(std::distance(begin, end)));
-        const double rowDuration = secondsPerRow();
-        for (auto it = begin; it != end; ++it) {
-            const int frame = frameOffset + std::clamp(
-                static_cast<int>(std::llround((it->row - startRow) * rowDuration * sampleRate_)),
-                0,
-                std::max(0, frameCount - 1));
-            scratchEvents_.push_back({
-                frame,
-                it->note,
-                it->patch,
-                it->instrumentIndex,
-                it->pan,
-                it->gateSeconds
-            });
+    const SynthRenderTelemetry synthTelemetry = synth_.telemetry();
+    const bool pressureHigh = synthTelemetry.underrunRisk >= 0.30
+        || synthTelemetry.dspLoadPercent >= 44.0
+        || synthTelemetry.activeVoices >= 12
+        || trackCountHint > 8
+        || eventDensity >= 0.20;
+    const bool pressureCritical = synthTelemetry.underrunRisk >= 0.48
+        || synthTelemetry.dspLoadPercent >= 58.0
+        || synthTelemetry.activeVoices >= 16
+        || trackCountHint > 12
+        || eventDensity >= 0.32;
+    const bool pressureEmergency = synthTelemetry.underrunRisk >= 0.68
+        || synthTelemetry.dspLoadPercent >= 74.0
+        || synthTelemetry.activeVoices >= 24
+        || trackCountHint > 16
+        || eventDensity >= 0.48;
+    auto makeLoadSafePatch = [&](const SynthPatch& source) {
+        if (!pressureHigh) {
+            return source;
+        }
+        SynthPatch patch = source;
+        auto tightenEnvelopes = [&](double releaseScale, double sustainScale) {
+            patch.ampEnvelope.attack = std::min(patch.ampEnvelope.attack, 0.01);
+            patch.ampEnvelope.decay = std::max(0.001, patch.ampEnvelope.decay * 0.55);
+            patch.ampEnvelope.sustain = std::clamp(patch.ampEnvelope.sustain * sustainScale, 0.0, 1.0);
+            patch.ampEnvelope.release = std::max(0.001, patch.ampEnvelope.release * releaseScale);
+            patch.filterEnvelope.decay = std::max(0.001, patch.filterEnvelope.decay * 0.6);
+            patch.filterEnvelope.release = std::max(0.001, patch.filterEnvelope.release * releaseScale);
+            patch.transientDecay = std::max(0.001, patch.transientDecay * 0.7);
+            patch.outputGlue *= 0.9;
+            patch.consoleCrosstalk *= 0.9;
+        };
+        if (pressureEmergency) {
+            patch.oscillatorBEnabled = false;
+            patch.oscillatorCEnabled = false;
+            patch.oscillatorDEnabled = false;
+            patch.unisonVoices = 1;
+            patch.unisonDetuneCents *= 0.12;
+            patch.subEnabled = false;
+            patch.noiseEnabled = false;
+            patch.fmEnabled = false;
+            patch.fmAmount = 0.0;
+            patch.ringEnabled = false;
+            patch.ringMod = 0.0;
+            patch.hardSyncEnabled = false;
+            patch.hardSync = 0.0;
+            patch.chorusEnabled = false;
+            patch.chorusMix = 0.0;
+            patch.chorusEnsemble = 0.0;
+            patch.bitCrushEnabled = false;
+            patch.bitCrush = 0.0;
+            patch.sampleRateReduction = 0.0;
+            patch.combMix = 0.0;
+            patch.delayMix = 0.0;
+            patch.reverbMix = 0.0;
+            patch.transientNoise = 0.0;
+            patch.transientShape = 0.0;
+            patch.transientPitchSemitones = 0.0;
+            patch.transientBurstCount = 1;
+            patch.click = 0.0;
+            patch.chorusTone = 0.45;
+            patch.delayDiffusion = 0.0;
+            patch.reverbDecay = 0.22;
+            patch.reverbEarlyMix = 0.08;
+            patch.outputGlue = 0.06;
+            patch.consoleCrosstalk = 0.0;
+            tightenEnvelopes(0.16, 0.45);
+            return patch;
+        }
+        if (pressureCritical) {
+            patch.unisonVoices = std::min(2, std::max(1, patch.unisonVoices));
+            patch.unisonDetuneCents *= 0.35;
+            patch.fmAmount *= 0.30;
+            if (patch.fmAmount < 0.015) {
+                patch.fmEnabled = false;
+                patch.fmAmount = 0.0;
+            }
+            patch.ringMod *= 0.25;
+            if (patch.ringMod < 0.02) {
+                patch.ringEnabled = false;
+                patch.ringMod = 0.0;
+            }
+            patch.hardSync *= 0.35;
+            if (patch.hardSync < 0.02) {
+                patch.hardSyncEnabled = false;
+                patch.hardSync = 0.0;
+            }
+            patch.chorusMix *= 0.22;
+            patch.chorusEnsemble *= 0.25;
+            patch.combMix *= 0.22;
+            patch.delayMix *= 0.18;
+            patch.reverbMix *= 0.14;
+            patch.transientNoise *= 0.25;
+            patch.transientShape *= 0.25;
+            patch.transientBurstCount = std::clamp(patch.transientBurstCount, 1, 2);
+            patch.bitCrush *= 0.2;
+            patch.sampleRateReduction *= 0.2;
+            patch.delayDiffusion *= 0.2;
+            patch.reverbDecay *= 0.35;
+            patch.reverbEarlyMix *= 0.45;
+            patch.outputGlue *= 0.55;
+            patch.consoleCrosstalk *= 0.45;
+            tightenEnvelopes(0.28, 0.58);
+            return patch;
+        }
+        patch.unisonVoices = std::min(3, std::max(1, patch.unisonVoices));
+        patch.unisonDetuneCents *= 0.6;
+        patch.fmAmount *= 0.6;
+        patch.ringMod *= 0.6;
+        patch.hardSync *= 0.6;
+        patch.chorusMix *= 0.45;
+        patch.chorusEnsemble *= 0.55;
+        patch.combMix *= 0.5;
+        patch.delayMix *= 0.42;
+        patch.reverbMix *= 0.36;
+        patch.transientNoise *= 0.6;
+        patch.transientShape *= 0.6;
+        patch.transientBurstCount = std::clamp(patch.transientBurstCount, 1, 4);
+        patch.delayDiffusion *= 0.7;
+        patch.reverbDecay *= 0.72;
+        patch.reverbEarlyMix *= 0.82;
+        patch.outputGlue *= 0.85;
+        patch.consoleCrosstalk *= 0.8;
+        tightenEnvelopes(0.5, 0.78);
+        return patch;
+    };
+
+    if (pressureHigh && song_ != nullptr) {
+        if (loadSafeInstrumentPatchesScratch_.size() < song_->instruments.size()) {
+            loadSafeInstrumentPatchesScratch_.resize(song_->instruments.size());
+            loadSafeInstrumentPatchValidScratch_.resize(song_->instruments.size(), 0);
+        }
+        std::fill_n(
+            loadSafeInstrumentPatchValidScratch_.begin(),
+            song_->instruments.size(),
+            static_cast<unsigned char>(0));
+        if (loadSafeOverridePatchesScratch_.size() < preparedPatchOverrides_.size()) {
+            loadSafeOverridePatchesScratch_.resize(preparedPatchOverrides_.size());
+            loadSafeOverridePatchValidScratch_.resize(preparedPatchOverrides_.size(), 0);
+        }
+        if (!preparedPatchOverrides_.empty()) {
+            std::fill_n(
+                loadSafeOverridePatchValidScratch_.begin(),
+                preparedPatchOverrides_.size(),
+                static_cast<unsigned char>(0));
         }
     }
+    auto resolveEventPatch = [&](int instrumentIndex, int patchOverrideIndex) -> const SynthPatch& {
+        const bool hasOverride = patchOverrideIndex >= 0
+            && patchOverrideIndex < static_cast<int>(preparedPatchOverrides_.size());
+        if (!pressureHigh) {
+            return hasOverride
+                ? preparedPatchOverrides_[static_cast<std::size_t>(patchOverrideIndex)]
+                : song_->instruments[static_cast<std::size_t>(instrumentIndex)].patch;
+        }
+        if (hasOverride) {
+            const std::size_t patchIndex = static_cast<std::size_t>(patchOverrideIndex);
+            if (patchIndex >= loadSafeOverridePatchesScratch_.size()) {
+                return preparedPatchOverrides_[patchIndex];
+            }
+            if (loadSafeOverridePatchValidScratch_[patchIndex] == 0) {
+                loadSafeOverridePatchesScratch_[patchIndex] = makeLoadSafePatch(preparedPatchOverrides_[patchIndex]);
+                loadSafeOverridePatchValidScratch_[patchIndex] = 1;
+            }
+            return loadSafeOverridePatchesScratch_[patchIndex];
+        }
+        const std::size_t patchIndex = static_cast<std::size_t>(instrumentIndex);
+        if (patchIndex >= loadSafeInstrumentPatchesScratch_.size() || patchIndex >= song_->instruments.size()) {
+            return song_->instruments.front().patch;
+        }
+        if (loadSafeInstrumentPatchValidScratch_[patchIndex] == 0) {
+            loadSafeInstrumentPatchesScratch_[patchIndex] = makeLoadSafePatch(song_->instruments[patchIndex].patch);
+            loadSafeInstrumentPatchValidScratch_[patchIndex] = 1;
+        }
+        return loadSafeInstrumentPatchesScratch_[patchIndex];
+    };
+
+    const double frameScale = secondsPerRow() * static_cast<double>(sampleRate_);
+    const auto eventFrame = [&](const PreparedEvent& event) {
+        return frameOffset + std::clamp(
+            static_cast<int>(std::llround((event.row - startRow) * frameScale)),
+            0,
+            std::max(0, frameCount - 1));
+    };
 
     int cursor = 0;
-    std::size_t nextEvent = 0;
-    constexpr int minRenderChunkSamples = 8;
+    auto nextEvent = cursorBegin;
+    int nextEventAbsoluteFrame = nextEvent != end ? eventFrame(*nextEvent) : std::numeric_limits<int>::max();
+    // Larger minimum segments reduce render-call overhead and help realtime stability.
+    int minRenderChunkSamples = pressureEmergency
+        ? 512
+        : (pressureCritical ? 320 : (pressureHigh ? 192 : 96));
+    int maxEventsPerFrame = pressureEmergency
+        ? 1
+        : (pressureCritical ? 2 : (pressureHigh ? 3 : 8));
+    int maxEventsPerTrackFrame = pressureEmergency
+        ? 1
+        : (pressureCritical ? 1 : (pressureHigh ? 2 : 3));
+    int maxEventsPerSegment = pressureEmergency
+        ? std::max(6, frameCount / 96)
+        : (pressureCritical
+            ? std::max(10, frameCount / 56)
+            : (pressureHigh ? std::max(16, frameCount / 36) : std::max(24, frameCount / 24)));
+    const double priorityKeepThreshold = pressureEmergency
+        ? 0.78
+        : (pressureCritical ? 0.60 : (pressureHigh ? 0.42 : -1.0));
+    const int trackCount = song_ != nullptr ? static_cast<int>(song_->tracks.size()) : 0;
+    if (trackCount > 0 && static_cast<int>(trackFrameCountersScratch_.size()) < trackCount) {
+        trackFrameCountersScratch_.resize(static_cast<std::size_t>(trackCount), 0);
+        trackFrameStampsScratch_.resize(static_cast<std::size_t>(trackCount), -1);
+        trackSegmentCountersScratch_.resize(static_cast<std::size_t>(trackCount), 0);
+    }
+    if (trackCount > 0) {
+        std::fill_n(trackFrameCountersScratch_.begin(), trackCount, 0);
+        std::fill_n(trackFrameStampsScratch_.begin(), trackCount, -1);
+        std::fill_n(trackSegmentCountersScratch_.begin(), trackCount, 0);
+    }
+    int maxEventsPerTrackSegment = pressureEmergency
+        ? 2
+        : (pressureCritical
+            ? 4
+            : (pressureHigh
+                ? std::max(5, maxEventsPerSegment / std::max(1, std::min(trackCount, 6)))
+                : std::max(10, maxEventsPerSegment / std::max(1, std::min(trackCount, 8)))));
+    if (eventDensity >= 0.35) {
+        minRenderChunkSamples = std::max(minRenderChunkSamples, pressureEmergency ? 768 : (pressureCritical ? 448 : 256));
+        maxEventsPerFrame = std::min(maxEventsPerFrame, pressureEmergency ? 1 : (pressureCritical ? 1 : 2));
+        maxEventsPerTrackFrame = std::min(maxEventsPerTrackFrame, 1);
+        maxEventsPerSegment = std::max(6, (maxEventsPerSegment * 3) / 5);
+        maxEventsPerTrackSegment = std::max(2, (maxEventsPerTrackSegment * 2) / 3);
+    }
+    int frameStamp = 0;
+    int eventsTriggeredInSegment = 0;
+    const double gateScale = pressureEmergency ? 0.18 : (pressureCritical ? 0.32 : (pressureHigh ? 0.62 : 1.0));
+    const double gateMinSeconds = pressureEmergency ? 0.006 : (pressureCritical ? 0.010 : 0.018);
+    const double gateMaxSeconds = pressureEmergency ? 0.08 : (pressureCritical ? 0.16 : 0.42);
     while (cursor < frameCount) {
         const int absoluteFrame = frameOffset + cursor;
-        while (nextEvent < scratchEvents_.size() && scratchEvents_[nextEvent].frame <= absoluteFrame) {
+        ++frameStamp;
+        int eventsTriggeredAtFrame = 0;
+        while (nextEvent != end && nextEventAbsoluteFrame <= absoluteFrame) {
+            const int instrumentIndex = nextEvent->instrumentIndex;
+            if (eventsTriggeredAtFrame >= maxEventsPerFrame) {
+                // Fast-forward dense event bursts scheduled for this same frame.
+                const double rowUpper = startRow
+                    + (static_cast<double>(absoluteFrame - frameOffset + 1) / frameScale);
+                nextEvent = std::lower_bound(
+                    nextEvent,
+                    end,
+                    rowUpper,
+                    [](const PreparedEvent& event, double row) {
+                        return event.row < row;
+                    });
+                nextEventAbsoluteFrame = nextEvent != end
+                    ? eventFrame(*nextEvent)
+                    : std::numeric_limits<int>::max();
+                continue;
+            }
+            const int eventTrack = nextEvent->trackIndex;
+            if (eventsTriggeredInSegment >= maxEventsPerSegment && nextEvent->priority < priorityKeepThreshold) {
+                ++nextEvent;
+                nextEventAbsoluteFrame = nextEvent != end ? eventFrame(*nextEvent) : std::numeric_limits<int>::max();
+                continue;
+            }
+            if (eventTrack >= 0 && eventTrack < trackCount) {
+                const std::size_t ti = static_cast<std::size_t>(eventTrack);
+                if (trackFrameStampsScratch_[ti] != frameStamp) {
+                    trackFrameStampsScratch_[ti] = frameStamp;
+                    trackFrameCountersScratch_[ti] = 0;
+                }
+                if (trackFrameCountersScratch_[ti] >= maxEventsPerTrackFrame) {
+                    ++nextEvent;
+                    nextEventAbsoluteFrame = nextEvent != end ? eventFrame(*nextEvent) : std::numeric_limits<int>::max();
+                    continue;
+                }
+                if (trackSegmentCountersScratch_[ti] >= maxEventsPerTrackSegment
+                    && nextEvent->priority < priorityKeepThreshold) {
+                    ++nextEvent;
+                    nextEventAbsoluteFrame = nextEvent != end ? eventFrame(*nextEvent) : std::numeric_limits<int>::max();
+                    continue;
+                }
+            }
+            if (song_ == nullptr
+                || instrumentIndex < 0
+                || instrumentIndex >= static_cast<int>(song_->instruments.size())) {
+                ++nextEvent;
+                nextEventAbsoluteFrame = nextEvent != end ? eventFrame(*nextEvent) : std::numeric_limits<int>::max();
+                continue;
+            }
+            const int patchOverrideIndex = nextEvent->patchOverrideIndex;
+            const SynthPatch& patch = resolveEventPatch(instrumentIndex, patchOverrideIndex);
+            const double safeGateSeconds = std::clamp(
+                nextEvent->gateSeconds * gateScale,
+                gateMinSeconds,
+                gateMaxSeconds);
             synth_.noteOn(
-                scratchEvents_[nextEvent].note,
-                scratchEvents_[nextEvent].patch,
-                scratchEvents_[nextEvent].pan,
-                scratchEvents_[nextEvent].gateSeconds,
-                scratchEvents_[nextEvent].instrumentIndex);
+                nextEvent->note,
+                patch,
+                nextEvent->pan,
+                safeGateSeconds,
+                instrumentIndex);
+            ++eventsTriggeredAtFrame;
+            ++eventsTriggeredInSegment;
+            if (eventTrack >= 0 && eventTrack < trackCount) {
+                const std::size_t ti = static_cast<std::size_t>(eventTrack);
+                ++trackFrameCountersScratch_[ti];
+                ++trackSegmentCountersScratch_[ti];
+            }
             ++nextEvent;
+            nextEventAbsoluteFrame = nextEvent != end ? eventFrame(*nextEvent) : std::numeric_limits<int>::max();
         }
 
         int segmentEnd = frameCount;
-        if (nextEvent < scratchEvents_.size()) {
-            const int nextBoundary = std::max(cursor + 1, scratchEvents_[nextEvent].frame - frameOffset);
+        if (nextEvent != end) {
+            const int nextBoundary = std::max(cursor + 1, nextEventAbsoluteFrame - frameOffset);
             if (nextBoundary - cursor < minRenderChunkSamples && nextBoundary < frameCount) {
                 segmentEnd = std::min(frameCount, cursor + minRenderChunkSamples);
             } else {
@@ -488,6 +786,7 @@ void RealtimePlaybackSession::renderSegment(float* left, float* right, int frame
         cursor = segmentEnd;
     }
 
+    preparedEventCursor_ = static_cast<std::size_t>(std::distance(preparedEvents_.begin(), nextEvent));
     playheadRows_ = endRow;
 }
 
@@ -518,13 +817,19 @@ void RealtimePlaybackSession::rebuildRowMap() {
 
 void RealtimePlaybackSession::rebuildPreparedEvents() {
     preparedEvents_.clear();
+    preparedPatchOverrides_.clear();
     if (song_ == nullptr) {
         return;
     }
     const bool soloActive = hasSoloTrack(*song_);
     const double rowDuration = secondsPerRow();
+    const double rowsPerSecond = rowDuration > 0.0 ? (1.0 / rowDuration) : 0.0;
+    const double minRetriggerSpacingRows = rowsPerSecond > 0.0
+        ? (64.0 / (static_cast<double>(sampleRate_) * rowDuration))
+        : 0.001;
     const double total = totalRows();
     const int trackCount = static_cast<int>(song_->tracks.size());
+    const int maxEventsPerSourceRow = std::clamp(trackCount + (trackCount / 2), 8, 32);
     std::size_t estimated = 0;
     for (const RowLocation& location : rowMap_) {
         if (location.valid) {
@@ -532,6 +837,7 @@ void RealtimePlaybackSession::rebuildPreparedEvents() {
         }
     }
     preparedEvents_.reserve(estimated);
+    preparedPatchOverrides_.reserve(std::min<std::size_t>(estimated, 2048));
 
     for (int absoluteRow = 0; absoluteRow < static_cast<int>(rowMap_.size()); ++absoluteRow) {
         const RowLocation& location = rowMap_[static_cast<std::size_t>(absoluteRow)];
@@ -541,6 +847,8 @@ void RealtimePlaybackSession::rebuildPreparedEvents() {
             continue;
         }
         const Pattern& pattern = song_->patterns[static_cast<std::size_t>(location.pattern)];
+        std::vector<PreparedEvent> rowEvents;
+        rowEvents.reserve(static_cast<std::size_t>(std::max(8, std::min(pattern.trackCount() * 2, 96))));
         for (int track = 0; track < pattern.trackCount(); ++track) {
             if (!shouldPlayTrack(*song_, track, soloActive)) {
                 continue;
@@ -567,10 +875,20 @@ void RealtimePlaybackSession::rebuildPreparedEvents() {
             if (trackInfo != nullptr) {
                 state.patch.gain *= trackInfo->volume;
             }
-            const int retriggerCount = std::max(1, step.retriggerCount);
-            const double spacingRows = std::max(0.001, step.retriggerSpacingRows);
+            const int retriggerCount = std::clamp(step.retriggerCount, 1, 4);
+            const double spacingRows = std::max(minRetriggerSpacingRows, step.retriggerSpacingRows);
+            const double baseVelocity = std::clamp(static_cast<double>(state.note.velocity), 0.0, 1.0);
+            const double trackWeight = trackInfo != nullptr
+                ? std::clamp(trackInfo->volume, 0.05, 2.0)
+                : 1.0;
+            const double bassWeight = state.note.midi <= 52 ? 1.18 : 1.0;
+            const double gateWeight = std::clamp(state.gateRows, 0.05, 1.25);
+            const double priorityBase = baseVelocity * trackWeight * bassWeight * gateWeight;
             double velocityScale = 1.0;
             for (int repeat = 0; repeat < retriggerCount; ++repeat) {
+                if (rowEvents.size() >= static_cast<std::size_t>(maxEventsPerSourceRow * 4)) {
+                    break;
+                }
                 const double eventRow = static_cast<double>(absoluteRow)
                     + state.microOffsetRows
                     + static_cast<double>(repeat) * spacingRows;
@@ -586,16 +904,38 @@ void RealtimePlaybackSession::rebuildPreparedEvents() {
                 const double gateRows = retriggerCount > 1
                     ? std::min(state.gateRows, spacingRows * 0.85)
                     : state.gateRows;
-                preparedEvents_.push_back({
+                int patchOverrideIndex = -1;
+                if (!step.automation.empty() || !step.effects.empty()) {
+                    patchOverrideIndex = static_cast<int>(preparedPatchOverrides_.size());
+                    preparedPatchOverrides_.push_back(state.patch);
+                }
+                rowEvents.push_back({
                     eventRow,
                     note,
-                    state.patch,
                     step.instrument,
+                    track,
+                    patchOverrideIndex,
                     state.pan,
-                    gateRows * rowDuration
+                    gateRows * rowDuration,
+                    priorityBase * velocityScale * (repeat == 0 ? 1.0 : 0.72)
                 });
                 velocityScale *= std::clamp(step.retriggerVelocityDecay, 0.0, 1.0);
             }
+        }
+        if (!rowEvents.empty()) {
+            std::sort(rowEvents.begin(), rowEvents.end(), [](const PreparedEvent& left, const PreparedEvent& right) {
+                if (left.priority != right.priority) {
+                    return left.priority > right.priority;
+                }
+                if (left.row != right.row) {
+                    return left.row < right.row;
+                }
+                return left.note.midi < right.note.midi;
+            });
+            if (rowEvents.size() > static_cast<std::size_t>(maxEventsPerSourceRow)) {
+                rowEvents.resize(static_cast<std::size_t>(maxEventsPerSourceRow));
+            }
+            preparedEvents_.insert(preparedEvents_.end(), rowEvents.begin(), rowEvents.end());
         }
     }
 
@@ -603,8 +943,12 @@ void RealtimePlaybackSession::rebuildPreparedEvents() {
         if (left.row != right.row) {
             return left.row < right.row;
         }
+        if (left.priority != right.priority) {
+            return left.priority > right.priority;
+        }
         return left.note.midi < right.note.midi;
     });
+    preparedEventCursor_ = 0;
 }
 
 std::uint64_t RealtimePlaybackSession::computePreparationSignature() const {
@@ -628,6 +972,19 @@ std::uint64_t RealtimePlaybackSession::computePreparationSignature() const {
         mix(track.solo ? 1ull : 0ull);
     }
     return value;
+}
+
+void RealtimePlaybackSession::syncPreparedEventCursor() {
+    if (preparedEvents_.empty()) {
+        preparedEventCursor_ = 0;
+        return;
+    }
+    const auto it = std::lower_bound(
+        preparedEvents_.begin(),
+        preparedEvents_.end(),
+        playheadRows_,
+        [](const PreparedEvent& event, double row) { return event.row < row; });
+    preparedEventCursor_ = static_cast<std::size_t>(std::distance(preparedEvents_.begin(), it));
 }
 
 void RealtimePlaybackSession::resetMixBus() {
@@ -681,7 +1038,7 @@ double RealtimePlaybackSession::playbackHeadroomGain() const {
         }
     }
     const double trackCount = std::max(1.0, static_cast<double>(audibleTracks));
-    const double effectiveTracks = 1.0 + (trackCount - 1.0) * 0.38;
+    const double effectiveTracks = 1.0 + (trackCount - 1.0) * 0.24;
     return 1.0 / std::sqrt(effectiveTracks);
 }
 

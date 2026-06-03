@@ -5,6 +5,7 @@
 namespace arachno {
 
 GuiMainKeyEditContext makeMainKeyEditContextFromState(const GuiMainKeyEditContextFactoryInput& input) {
+    const auto state = input;
     return GuiMainKeyEditContext {
         input.key,
         input.ctrlDown,
@@ -30,8 +31,8 @@ GuiMainKeyEditContext makeMainKeyEditContextFromState(const GuiMainKeyEditContex
         input.cycleInstrumentBy,
         input.selectInstrument,
         input.auditionArmedInstrument,
-        [&input]() {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state]() {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             return std::make_pair(snap.editor.status.cursorRow, snap.editor.status.cursorTrack);
         },
         input.moveCursor,
@@ -41,13 +42,13 @@ GuiMainKeyEditContext makeMainKeyEditContextFromState(const GuiMainKeyEditContex
         input.runActionById,
         input.applySelectionRange,
         input.lockManualScroll,
-        [&input]() {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state]() {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             return static_cast<int>(snap.editor.instruments.size());
         },
-        [&input]() {
-            const AppSessionSnapshot snap = input.activeSnapshot();
-            const int rows = std::max(1, input.activePatternRows);
+        [state]() {
+            const AppSessionSnapshot snap = state.activeSnapshot();
+            const int rows = std::max(1, state.activePatternRows);
             const int tracks = std::max(1, snap.editor.activeGrid.trackCount);
             AppActionRequest selectAll;
             selectAll.actionId = "editor.selection.select";
@@ -56,7 +57,7 @@ GuiMainKeyEditContext makeMainKeyEditContextFromState(const GuiMainKeyEditContex
                 {"track", "0"},
                 {"rows", std::to_string(rows)},
                 {"tracks", std::to_string(tracks)}};
-            input.runAction(selectAll);
+            state.runAction(selectAll);
         }};
 }
 

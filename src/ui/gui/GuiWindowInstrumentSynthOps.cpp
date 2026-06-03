@@ -6,52 +6,53 @@ namespace arachno {
 
 GuiWindowInstrumentSynthBindings makeInstrumentSynthBindingsFromWindowState(
     const GuiWindowInstrumentSynthContext& context) {
+    const auto state = context;
     GuiWindowInstrumentSynthBindings bindings;
 
-    bindings.selectInstrument = [&](int index) {
-        selectInstrumentFromWindowState(context, index);
+    bindings.selectInstrument = [state](int index) {
+        selectInstrumentFromWindowState(state, index);
     };
-    bindings.filteredInstrumentIndices = [&](const AppSessionSnapshot& snapshot) {
-        return filteredInstrumentIndicesFromWindowState(context, snapshot);
+    bindings.filteredInstrumentIndices = [state](const AppSessionSnapshot& snapshot) {
+        return filteredInstrumentIndicesFromWindowState(state, snapshot);
     };
-    bindings.openInstrumentBrowser = [&]() {
-        openInstrumentBrowserFromWindowState(context);
+    bindings.openInstrumentBrowser = [state]() {
+        openInstrumentBrowserFromWindowState(state);
     };
-    bindings.closeInstrumentBrowser = [&, selectInstrument = bindings.selectInstrument](bool applySelection) {
-        closeInstrumentBrowserFromWindowState(context, applySelection, selectInstrument);
+    bindings.closeInstrumentBrowser = [state, selectInstrument = bindings.selectInstrument](bool applySelection) {
+        closeInstrumentBrowserFromWindowState(state, applySelection, selectInstrument);
     };
-    bindings.cycleInstrumentBy = [&, selectInstrument = bindings.selectInstrument](int delta) {
-        cycleInstrumentByFromWindowState(context, delta, selectInstrument);
+    bindings.cycleInstrumentBy = [state, selectInstrument = bindings.selectInstrument](int delta) {
+        cycleInstrumentByFromWindowState(state, delta, selectInstrument);
     };
-    bindings.clampInstrumentListWindow = [&]() {
-        clampInstrumentListWindowFromWindowState(context);
+    bindings.clampInstrumentListWindow = [state]() {
+        clampInstrumentListWindowFromWindowState(state);
     };
-    bindings.scrollInstrumentList = [&](int delta) {
-        scrollInstrumentListFromWindowState(context, delta);
+    bindings.scrollInstrumentList = [state](int delta) {
+        scrollInstrumentListFromWindowState(state, delta);
     };
-    bindings.auditionArmedInstrument = [&]() {
-        auditionArmedInstrumentFromWindowState(context);
+    bindings.auditionArmedInstrument = [state]() {
+        auditionArmedInstrumentFromWindowState(state);
     };
-    bindings.auditionSynthPreviewMidi = [&](int midiNote) {
-        auditionSynthPreviewMidiFromWindowState(context, midiNote);
+    bindings.auditionSynthPreviewMidi = [state](int midiNote) {
+        auditionSynthPreviewMidiFromWindowState(state, midiNote);
     };
-    bindings.auditionSynthPreviewMidiVelocity = [&](int midiNote, float velocity) {
-        auditionSynthPreviewMidiVelocityFromWindowState(context, midiNote, velocity);
+    bindings.auditionSynthPreviewMidiVelocity = [state](int midiNote, float velocity) {
+        auditionSynthPreviewMidiVelocityFromWindowState(state, midiNote, velocity);
     };
-    bindings.auditionSynthOscillatorPreview = [&](const SynthPatch& sourcePatch, int oscillatorIndex, int midiNote) {
-        auditionSynthOscillatorPreviewFromWindowState(context, sourcePatch, oscillatorIndex, midiNote);
+    bindings.auditionSynthOscillatorPreview = [state](const SynthPatch& sourcePatch, int oscillatorIndex, int midiNote) {
+        auditionSynthOscillatorPreviewFromWindowState(state, sourcePatch, oscillatorIndex, midiNote);
     };
-    bindings.clampInstrumentIndex = [&]() {
-        return clampInstrumentIndexFromWindowState(context);
+    bindings.clampInstrumentIndex = [state]() {
+        return clampInstrumentIndexFromWindowState(state);
     };
-    bindings.setSynthParameter = [&](int instrument, const std::string& param, double value, bool refresh) {
-        return setSynthParameterFromWindowState(context, instrument, param, value, refresh);
+    bindings.setSynthParameter = [state](int instrument, const std::string& param, double value, bool refresh) {
+        return setSynthParameterFromWindowState(state, instrument, param, value, refresh);
     };
-    bindings.setSynthWaveform = [&](int instrument, const std::string& oscillator, const std::string& wave, bool refresh) {
-        return setSynthWaveformFromWindowState(context, instrument, oscillator, wave, refresh);
+    bindings.setSynthWaveform = [state](int instrument, const std::string& oscillator, const std::string& wave, bool refresh) {
+        return setSynthWaveformFromWindowState(state, instrument, oscillator, wave, refresh);
     };
-    bindings.applyPatchToInstrument = [&](int instrument, const SynthPatch& patch, bool preserveName) {
-        return applyPatchToInstrumentFromWindowState(context, instrument, patch, preserveName);
+    bindings.applyPatchToInstrument = [state](int instrument, const SynthPatch& patch, bool preserveName) {
+        return applyPatchToInstrumentFromWindowState(state, instrument, patch, preserveName);
     };
 
     return bindings;

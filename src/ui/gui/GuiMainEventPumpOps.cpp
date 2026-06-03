@@ -1,5 +1,7 @@
 #include "ui/gui/GuiMainEventPumpOps.h"
 
+#include <chrono>
+
 #include "ui/gui/GuiMainEventScaffoldDispatchOps.h"
 #include "ui/gui/GuiMainWindowEventDispatchOps.h"
 #include "ui/gui/GuiMainXEventDispatchWrappersOps.h"
@@ -7,7 +9,17 @@
 namespace arachno {
 
 void pumpPendingMainEvents(const GuiMainEventPumpContext& context) {
+    int processed = 0;
+    constexpr int maxEventsPerPump = 32;
+    constexpr int maxPumpWallMicros = 900;
+    const auto pumpStart = std::chrono::steady_clock::now();
+    auto serviceAudio = [&]() {
+        if (context.serviceRealtimeAudio) {
+            context.serviceRealtimeAudio();
+        }
+    };
     while (XPending(context.display) > 0) {
+        ++processed;
         XEvent event;
         XNextEvent(context.display, &event);
 
@@ -79,8 +91,26 @@ void pumpPendingMainEvents(const GuiMainEventPumpContext& context) {
                             keyEvent);
                     }},
                 event)) {
+            serviceAudio();
+            const auto elapsedMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - pumpStart);
+            if (processed >= maxEventsPerPump || elapsedMicros.count() >= maxPumpWallMicros) {
+                serviceAudio();
+                break;
+            }
             continue;
         }
+        serviceAudio();
+        const auto elapsedMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - pumpStart);
+        if (processed >= maxEventsPerPump || elapsedMicros.count() >= maxPumpWallMicros) {
+            // Bound event-drain work by count and wall time so realtime audio gets serviced frequently.
+            serviceAudio();
+            break;
+        }
+    }
+    if (processed > 0) {
+        serviceAudio();
     }
 }
 

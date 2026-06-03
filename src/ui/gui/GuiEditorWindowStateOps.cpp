@@ -9,51 +9,57 @@ namespace arachno {
 
 GuiEditorWindowStateBindings makeEditorWindowStateBindingsFromWindowState(
     const GuiEditorWindowStateBindingsInput& input) {
+    const auto state = input;
     GuiEditorWindowStateBindings bindings;
 
-    bindings.resizePatternRows = [&](int rows) {
+    bindings.resizePatternRows = [state](int rows) {
         resizePatternRowsFromWindowState(
             rows,
-            input.activePatternRows,
-            [&](const AppActionRequest& request) { return input.runAction(request); });
+            state.activePatternRows,
+            [state](const AppActionRequest& request) { return state.runAction(request); });
     };
 
-    bindings.setArmedOctave = [&](int octave) {
-        setArmedOctaveFromWindowState(octave, input.armedOctave, input.paintNoteMidi);
+    bindings.setArmedOctave = [state](int octave) {
+        setArmedOctaveFromWindowState(octave, state.armedOctave, state.paintNoteMidi);
     };
 
-    bindings.applyArmedOctaveToSelection = [&]() {
+    bindings.applyArmedOctaveToSelection = [state]() {
         applyArmedOctaveToSelectionFromWindowState(
-            input.armedOctave,
-            [&](const AppActionRequest& request) { return input.runAction(request); });
+            state.armedOctave,
+            [state](const AppActionRequest& request) { return state.runAction(request); });
     };
 
-    bindings.ensureSynthKeyboardShowsMidi = [&](int midiNote) {
-        input.synthKeyboardBaseOctave = synthKeyboardBaseForMidi(
-            input.synthKeyboardBaseOctave,
-            input.synthKeyboardVisibleOctaves,
+    bindings.ensureSynthKeyboardShowsMidi = [state](int midiNote) {
+        state.synthKeyboardBaseOctave = synthKeyboardBaseForMidi(
+            state.synthKeyboardBaseOctave,
+            state.synthKeyboardVisibleOctaves,
             midiNote);
     };
 
-    bindings.ensurePatternRowsForRow = [&](int row) {
+    bindings.ensurePatternRowsForRow = [state](int row) {
         ensurePatternRowsForRowFromWindowState(
             row,
-            input.activePatternRows,
-            [&](int rows) { bindings.resizePatternRows(rows); });
+            state.activePatternRows,
+            [state](int rows) {
+                resizePatternRowsFromWindowState(
+                    rows,
+                    state.activePatternRows,
+                    [state](const AppActionRequest& request) { return state.runAction(request); });
+            });
     };
 
-    bindings.applyLastActionState = [&](const GuiLastActionState& state) {
-        input.lastAction.ok = state.ok;
-        input.lastAction.actionId = state.actionId;
-        input.lastAction.message = state.message;
-        input.lastAction.error = state.error;
+    bindings.applyLastActionState = [state](const GuiLastActionState& actionState) {
+        state.lastAction.ok = actionState.ok;
+        state.lastAction.actionId = actionState.actionId;
+        state.lastAction.message = actionState.message;
+        state.lastAction.error = actionState.error;
     };
 
-    bindings.applyActionResultStatus = [&](const AppActionResult& result) {
-        input.lastAction.ok = result.ok;
-        input.lastAction.actionId = result.actionId;
-        input.lastAction.message = result.message;
-        input.lastAction.error = result.error;
+    bindings.applyActionResultStatus = [state](const AppActionResult& result) {
+        state.lastAction.ok = result.ok;
+        state.lastAction.actionId = result.actionId;
+        state.lastAction.message = result.message;
+        state.lastAction.error = result.error;
     };
 
     return bindings;

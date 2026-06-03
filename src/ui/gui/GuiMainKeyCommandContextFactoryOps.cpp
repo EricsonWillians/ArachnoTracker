@@ -8,6 +8,7 @@
 namespace arachno {
 
 GuiMainKeyCommandContext makeMainKeyCommandContextFromState(const GuiMainKeyCommandContextFactoryInput& input) {
+    const auto state = input;
     return GuiMainKeyCommandContext {
         input.key,
         input.ctrlDown,
@@ -29,9 +30,9 @@ GuiMainKeyCommandContext makeMainKeyCommandContextFromState(const GuiMainKeyComm
         input.openInstrumentBrowser,
         input.cycleInstrumentBy,
         input.runFileButtonAction,
-        [&input]() {
-            const AppSessionSnapshot snap = input.activeSnapshot();
-            input.beginInlinePrompt(
+        [state]() {
+            const AppSessionSnapshot snap = state.activeSnapshot();
+            state.beginInlinePrompt(
                 InlinePromptKind::SaveProjectPath,
                 "Save project as",
                 "Path to save project",
@@ -43,12 +44,12 @@ GuiMainKeyCommandContext makeMainKeyCommandContextFromState(const GuiMainKeyComm
         input.beginPatternCreatePrompt,
         input.beginPatternClonePrompt,
         input.deleteActivePattern,
-        [&input]() {
+        [state]() {
             std::ostringstream initial;
             initial.setf(std::ios::fixed);
             initial.precision(2);
-            initial << input.targetSongLengthMinutes;
-            input.beginInlinePrompt(
+            initial << state.targetSongLengthMinutes;
+            state.beginInlinePrompt(
                 InlinePromptKind::SongLengthMinutes,
                 "Set track length (minutes)",
                 "Example: 4.50",
@@ -57,22 +58,22 @@ GuiMainKeyCommandContext makeMainKeyCommandContextFromState(const GuiMainKeyComm
                 -1);
         },
         input.setSynthWindowVisible,
-        [&input](int direction) {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state](int direction) {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             const int count = static_cast<int>(snap.editor.patterns.size());
             if (count > 0) {
                 const int current = std::clamp(snap.editor.status.activePattern, 0, count - 1);
                 const int next = direction < 0 ? (current + count - 1) % count : (current + 1) % count;
-                (void)input.selectPatternIndex(next, true);
+                (void)state.selectPatternIndex(next, true);
             }
         },
-        [&input](int direction) {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state](int direction) {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             const int count = static_cast<int>(snap.editor.order.size());
             if (count > 0) {
-                const int current = std::clamp(input.selectedOrderIndex, 0, count - 1);
+                const int current = std::clamp(state.selectedOrderIndex, 0, count - 1);
                 const int next = direction < 0 ? (current + count - 1) % count : (current + 1) % count;
-                (void)input.selectOrderIndex(next, true);
+                (void)state.selectOrderIndex(next, true);
             }
         },
         input.insertOrderAtSelection,
@@ -80,20 +81,20 @@ GuiMainKeyCommandContext makeMainKeyCommandContextFromState(const GuiMainKeyComm
         input.removeSelectedOrder,
         input.buildSongToTargetSeconds,
         input.trimSongToTargetSeconds,
-        [&input](double delta) {
+        [state](double delta) {
             AppActionRequest velocityNudge;
             velocityNudge.actionId = "editor.step.velocity_nudge";
             velocityNudge.parameters = {{"velocity_delta", std::to_string(delta)}};
-            input.runAction(velocityNudge);
+            state.runAction(velocityNudge);
         },
-        [&input](int semitones) {
+        [state](int semitones) {
             AppActionRequest transposeSelection;
             transposeSelection.actionId = "editor.selection.transpose";
             transposeSelection.parameters = {{"semitones", std::to_string(semitones)}};
-            input.runAction(transposeSelection);
+            state.runAction(transposeSelection);
         },
-        [&input]() {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state]() {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             const int selectionRows = std::max(1, snap.editor.status.selectionRows);
             AppActionRequest repeatSelection;
             repeatSelection.actionId = "editor.selection.repeat";
@@ -101,7 +102,7 @@ GuiMainKeyCommandContext makeMainKeyCommandContextFromState(const GuiMainKeyComm
                 {"repeats", "1"},
                 {"row_spacing", std::to_string(selectionRows)},
                 {"track_spacing", "0"}};
-            input.runAction(repeatSelection);
+            state.runAction(repeatSelection);
         }};
 }
 

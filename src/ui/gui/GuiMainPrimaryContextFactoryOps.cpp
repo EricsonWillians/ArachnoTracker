@@ -5,6 +5,7 @@
 namespace arachno {
 
 GuiMainPrimaryClickContext makeMainPrimaryClickContextFromState(const GuiMainPrimaryContextFactoryInput& input) {
+    const auto state = input;
     return GuiMainPrimaryClickContext {
         input.mx,
         input.my,
@@ -27,49 +28,49 @@ GuiMainPrimaryClickContext makeMainPrimaryClickContextFromState(const GuiMainPri
         input.orderInsertButton,
         input.orderAppendButton,
         input.orderDeleteButton,
-        [&input](const std::string& actionId) {
+        [state](const std::string& actionId) {
             AppActionRequest request;
             request.actionId = actionId;
-            input.runActionRequest(request);
+            state.runActionRequest(request);
         },
-        [&input](const std::string& actionId) { input.runFileButtonAction(actionId); },
-        [&input](GuiThemeMode mode) { input.setThemeMode(mode); },
-        [&input](AudioPerformanceMode mode, int sampleRate) { input.setAudioPerformanceMode(mode, sampleRate); },
-        [&input](int direction) {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state](const std::string& actionId) { state.runFileButtonAction(actionId); },
+        [state](GuiThemeMode mode) { state.setThemeMode(mode); },
+        [state](AudioPerformanceMode mode, int sampleRate) { state.setAudioPerformanceMode(mode, sampleRate); },
+        [state](int direction) {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             const int totalTrackCols = std::max(1, snap.editor.activeGrid.trackCount);
-            const int maxTrackStart = std::max(0, totalTrackCols - std::max(1, input.layout.trackCols));
-            input.gridTrackStart = std::clamp(input.gridTrackStart + direction, 0, maxTrackStart);
+            const int maxTrackStart = std::max(0, totalTrackCols - std::max(1, state.layout.trackCols));
+            state.gridTrackStart = std::clamp(state.gridTrackStart + direction, 0, maxTrackStart);
         },
-        [&input]() { input.beginPatternCreatePrompt(); },
-        [&input]() { input.beginPatternClonePrompt(); },
-        [&input]() { input.deleteActivePattern(); },
-        [&input]() { input.insertOrderAtSelection(); },
-        [&input]() { input.appendOrderFromActivePattern(); },
-        [&input]() { input.removeSelectedOrder(); },
-        [&input](int direction) {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state]() { state.beginPatternCreatePrompt(); },
+        [state]() { state.beginPatternClonePrompt(); },
+        [state]() { state.deleteActivePattern(); },
+        [state]() { state.insertOrderAtSelection(); },
+        [state]() { state.appendOrderFromActivePattern(); },
+        [state]() { state.removeSelectedOrder(); },
+        [state](int direction) {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             const int count = static_cast<int>(snap.editor.patterns.size());
             if (count <= 0) {
                 return;
             }
             const int current = std::clamp(snap.editor.status.activePattern, 0, count - 1);
             const int next = direction < 0 ? (current + count - 1) % count : (current + 1) % count;
-            (void)input.selectPatternIndex(next, true);
+            (void)state.selectPatternIndex(next, true);
         },
-        [&input](int direction) {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state](int direction) {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             const int count = static_cast<int>(snap.editor.order.size());
             if (count <= 0) {
                 return;
             }
-            const int current = std::clamp(input.selectedOrderIndex, 0, count - 1);
+            const int current = std::clamp(state.selectedOrderIndex, 0, count - 1);
             const int next = direction < 0 ? (current + count - 1) % count : (current + 1) % count;
-            (void)input.selectOrderIndex(next, true);
+            (void)state.selectOrderIndex(next, true);
         },
-        [&input](int index, bool valid) { (void)input.selectOrderIndex(index, valid); },
-        [&input](const TrackHeaderHit& hit, int clickX, int clickY) {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state](int index, bool valid) { (void)state.selectOrderIndex(index, valid); },
+        [state](const TrackHeaderHit& hit, int clickX, int clickY) {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             const TrackStripSummary* summary = hit.track < static_cast<int>(snap.editor.tracks.size())
                 ? &snap.editor.tracks[static_cast<std::size_t>(hit.track)]
                 : nullptr;
@@ -79,7 +80,7 @@ GuiMainPrimaryClickContext makeMainPrimaryClickContextFromState(const GuiMainPri
                 mute.parameters = {
                     {"track", std::to_string(hit.track)},
                     {"value", summary->muted ? "false" : "true"}};
-                input.runActionRequest(mute);
+                state.runActionRequest(mute);
                 return true;
             }
             if (hit.soloRect.contains(clickX, clickY) && summary != nullptr) {
@@ -88,11 +89,11 @@ GuiMainPrimaryClickContext makeMainPrimaryClickContextFromState(const GuiMainPri
                 solo.parameters = {
                     {"track", std::to_string(hit.track)},
                     {"value", summary->solo ? "false" : "true"}};
-                input.runActionRequest(solo);
+                state.runActionRequest(solo);
                 return true;
             }
             const int cursorRow = snap.editor.status.cursorRow;
-            input.moveCursor(cursorRow, hit.track);
+            state.moveCursor(cursorRow, hit.track);
             return true;
         }};
 }

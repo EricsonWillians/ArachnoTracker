@@ -5,6 +5,7 @@
 namespace arachno {
 
 GuiMainKeyNoteContext makeMainKeyNoteContextFromState(const GuiMainKeyNoteContextFactoryInput& input) {
+    const auto state = input;
     return GuiMainKeyNoteContext {
         input.key,
         input.keycode,
@@ -24,15 +25,15 @@ GuiMainKeyNoteContext makeMainKeyNoteContextFromState(const GuiMainKeyNoteContex
         input.claimSynthPreviewKey,
         input.auditionSynthPreviewMidi,
         input.selectInstrument,
-        [&input]() {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state]() {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             return static_cast<int>(snap.editor.instruments.size());
         },
-        [&input](int instrumentIndex, int midiNote, bool shouldStepAdvance) {
+        [state](int instrumentIndex, int midiNote, bool shouldStepAdvance) {
             AppActionRequest inst;
             inst.actionId = "editor.step.instrument";
             inst.parameters = {{"index", std::to_string(instrumentIndex)}};
-            AppActionResult setInstrument = input.runActionWithRefresh(inst, true);
+            AppActionResult setInstrument = state.runActionWithRefresh(inst, true);
             if (!setInstrument.ok) {
                 return false;
             }
@@ -40,20 +41,20 @@ GuiMainKeyNoteContext makeMainKeyNoteContextFromState(const GuiMainKeyNoteContex
             note.actionId = "editor.step.note";
             note.parameters = {
                 {"note", midiNoteName(midiNote)},
-                {"velocity", velocityText(input.defaultVelocity)}};
-            AppActionResult noteResult = input.runActionWithRefresh(note, true);
+                {"velocity", velocityText(state.defaultVelocity)}};
+            AppActionResult noteResult = state.runActionWithRefresh(note, true);
             if (!noteResult.ok) {
                 return false;
             }
             AppActionRequest preview;
             preview.actionId = "preview.cursor";
-            (void)input.runActionWithRefresh(preview, false);
+            (void)state.runActionWithRefresh(preview, false);
             if (shouldStepAdvance) {
-                const AppSessionSnapshot snap = input.activeSnapshot();
-                input.ensurePatternRowsForRow(snap.editor.status.cursorRow + 1);
+                const AppSessionSnapshot snap = state.activeSnapshot();
+                state.ensurePatternRowsForRow(snap.editor.status.cursorRow + 1);
                 AppActionRequest down;
                 down.actionId = "editor.navigation.down";
-                (void)input.runActionWithRefresh(down, true);
+                (void)state.runActionWithRefresh(down, true);
             }
             return true;
         }};

@@ -31,6 +31,7 @@ void runMainLoopFromState(const GuiMainRunLoopContext& context) {
                 context.ensureTrackerBackbuffer,
                 context.makeMainMotionContext,
                 context.handleMainMotionNotify,
+                context.processRealtimeAudio,
                 context.playbackSampleRate,
                 context.makeButtonPressFactoryInput,
                 context.makeMainModalMouseContext,

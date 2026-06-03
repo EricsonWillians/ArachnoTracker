@@ -5,14 +5,17 @@
 namespace arachno {
 
 void runMainLoopTick(const GuiMainLoopTickContext& context) {
+    const bool streamWasActive = context.previousAudioStreamActive;
     if (context.pollMidiInput() && context.synthWindowVisible) {
         context.needsRedraw = true;
     }
 
     context.processRealtimeAudio();
+    const bool streamActive = context.previousAudioStreamActive;
 
     const auto now = std::chrono::steady_clock::now();
-    if (now - context.lastRefresh >= std::chrono::milliseconds(80)) {
+    const auto refreshPeriod = streamActive ? std::chrono::milliseconds(240) : std::chrono::milliseconds(80);
+    if (now - context.lastRefresh >= refreshPeriod) {
         context.refreshSnapshot();
         context.needsRedraw = true;
         context.lastRefresh = now;
@@ -38,8 +41,17 @@ void runMainLoopTick(const GuiMainLoopTickContext& context) {
         context.synthWindowNeedsRedraw = false;
     }
 
-    const int sleepMs = context.previousAudioStreamActive ? 1 : 16;
-    std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+    if (streamWasActive || streamActive) {
+        // Service audio again after potentially expensive draw work.
+        context.processRealtimeAudio();
+    }
+
+    if (streamActive) {
+        // Yield instead of sleeping so audio refill can run again with minimal delay.
+        std::this_thread::yield();
+    } else {
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
 }
 
 } // namespace arachno

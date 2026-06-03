@@ -184,15 +184,25 @@ GuiSynthScopeRenderResult drawSynthScopeSection(const GuiSynthScopeRenderContext
         }
         return out.str();
     };
+    // Enhanced polyphony / voice info display
     const std::string scopePolyText =
         "Poly " + std::to_string(result.previewNotes.size())
         + " | Row " + std::to_string(rowChordNotes.size())
         + " | Inst " + std::to_string(rowInstrumentNotes.size())
         + " | Chord " + compactNoteList(!rowInstrumentNotes.empty() ? rowInstrumentNotes : rowChordNotes);
+    std::string voiceInfoText = "UNI×" + std::to_string(context.patch.unisonVoices);
+    // Show active synthesizer voice count from telemetry if available
+    if (context.runtime.laneSynth[0].active()) {
+        int totalActiveVoices = 0;
+        for (std::size_t li = 0; li < 4; ++li) {
+            totalActiveVoices += context.runtime.laneSynth[li].telemetry().activeVoices;
+        }
+        voiceInfoText += " | Voices " + std::to_string(totalActiveVoices);
+    }
     context.drawText(
         scopePanel.x + 308,
         scopePanel.y + 16,
-        context.fitText(scopeSourceText + " | " + scopePolyText, std::max(80, scopePanel.width - 316)),
+        context.fitText(scopeSourceText + " | " + scopePolyText + " | " + voiceInfoText, std::max(80, scopePanel.width - 316)),
         context.theme.mutedText);
     const int laneTop = scopePanel.y + 28;
     const int laneHeight = 31;
@@ -225,9 +235,13 @@ GuiSynthScopeRenderResult drawSynthScopeSection(const GuiSynthScopeRenderContext
         const std::pair<unsigned long, unsigned long> traceColors = waveTraceColors(wave);
         const unsigned long traceMain = traceColors.first;
         const unsigned long traceGlow = traceColors.second;
-        const std::string label = std::string("OSC ") + static_cast<char>('A' + laneIndex)
+        std::string label = std::string("OSC ") + static_cast<char>('A' + laneIndex)
             + "  " + waveformName(wave)
             + "  LVL " + std::to_string(levelPct) + "%";
+        // Append unison info when relevant
+        if (context.patch.unisonVoices > 1 && enabled) {
+            label += "  UNI×" + std::to_string(context.patch.unisonVoices);
+        }
         context.drawText(lane.x + 6, lane.y + 13, label, enabled ? traceMain : context.theme.mutedText);
         if (enabled) {
             const int meterX = lane.x + 6;
@@ -238,6 +252,13 @@ GuiSynthScopeRenderResult drawSynthScopeSection(const GuiSynthScopeRenderContext
             context.drawRect(meterX, meterY, meterW, meterH, context.theme.gridLine);
             const int fillW = std::clamp(static_cast<int>(std::lround((static_cast<double>(meterW - 2) * levelPct) / 100.0)), 0, meterW - 2);
             context.drawFilledRect(meterX + 1, meterY + 1, fillW, meterH - 2, traceMain);
+            // Voice activity LED: small bright dot when this oscillator is actively sounding
+            if (scopeSignalActive && context.runtime.laneSynth[static_cast<std::size_t>(laneIndex)].active()) {
+                const int ledX = lane.x + lane.width - 14;
+                const int ledY = lane.y + 4;
+                context.drawFilledRect(ledX, ledY, 6, 6, traceMain);
+                context.drawRect(ledX, ledY, 6, 6, context.theme.gridLine);
+            }
         }
         const int graphX = lane.x + 170;
         const int graphY = lane.y + 2;

@@ -7,6 +7,7 @@
 namespace arachno {
 
 GuiMainWheelContext makeMainWheelContextFromState(const GuiMainWheelContextFactoryInput& input) {
+    const auto state = input;
     return GuiMainWheelContext {
         input.button,
         input.mx,
@@ -23,14 +24,14 @@ GuiMainWheelContext makeMainWheelContextFromState(const GuiMainWheelContextFacto
         input.draggingSelection,
         input.dragAnchorRow,
         input.dragAnchorTrack,
-        [&input](int direction) {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state](int direction) {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             const int totalTrackCols = std::max(1, snap.editor.activeGrid.trackCount);
-            const int maxTrackStart = std::max(0, totalTrackCols - std::max(1, input.layout.trackCols));
-            input.gridTrackStart = std::clamp(input.gridTrackStart + direction, 0, maxTrackStart);
+            const int maxTrackStart = std::max(0, totalTrackCols - std::max(1, state.layout.trackCols));
+            state.gridTrackStart = std::clamp(state.gridTrackStart + direction, 0, maxTrackStart);
         },
         input.scrollInstrumentList,
-        [&input](int wheelDelta) { input.resizePatternRows(input.activePatternRows + (wheelDelta * -2)); },
+        [state](int wheelDelta) { state.resizePatternRows(state.activePatternRows + (wheelDelta * -2)); },
         input.lockManualScroll,
         input.refreshSnapshot,
         input.gridPositionToCell,
@@ -38,6 +39,7 @@ GuiMainWheelContext makeMainWheelContextFromState(const GuiMainWheelContextFacto
 }
 
 GuiMainGridClickContext makeMainGridClickContextFromState(const GuiMainGridClickContextFactoryInput& input) {
+    const auto state = input;
     return GuiMainGridClickContext {
         input.button,
         input.mx,
@@ -53,8 +55,8 @@ GuiMainGridClickContext makeMainGridClickContextFromState(const GuiMainGridClick
         input.dragAnchorRow,
         input.dragAnchorTrack,
         input.gridPositionToCell,
-        [&input]() {
-            const AppSessionSnapshot snap = input.activeSnapshot();
+        [state]() {
+            const AppSessionSnapshot snap = state.activeSnapshot();
             return std::make_pair(snap.editor.status.cursorRow, snap.editor.status.cursorTrack);
         },
         input.moveCursor,

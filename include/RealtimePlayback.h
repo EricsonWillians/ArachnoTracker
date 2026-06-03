@@ -119,22 +119,15 @@ private:
         bool valid = false;
     };
 
-    struct PlaybackEvent {
-        int frame = 0;
-        Note note;
-        SynthPatch patch;
-        int instrumentIndex = -1;
-        double pan = 0.0;
-        double gateSeconds = 0.2;
-    };
-
     struct PreparedEvent {
         double row = 0.0;
         Note note;
-        SynthPatch patch;
         int instrumentIndex = -1;
+        int trackIndex = -1;
+        int patchOverrideIndex = -1;
         double pan = 0.0;
         double gateSeconds = 0.2;
+        double priority = 0.0;
     };
 
     RowLocation locateRow(int absoluteRow) const;
@@ -143,6 +136,7 @@ private:
     void rebuildRowMap();
     void rebuildPreparedEvents();
     std::uint64_t computePreparationSignature() const;
+    void syncPreparedEventCursor();
     void resetMixBus();
     void applyMixBus(float* left, float* right, int sampleCount);
     double playbackHeadroomGain() const;
@@ -159,8 +153,18 @@ private:
     MixBusState mixBus_;
     std::vector<RowLocation> rowMap_;
     std::vector<PreparedEvent> preparedEvents_;
-    mutable std::vector<PlaybackEvent> scratchEvents_;
+    std::vector<SynthPatch> preparedPatchOverrides_;
+    // Reused per-segment bookkeeping to avoid allocations on the realtime audio path.
+    std::vector<int> trackFrameCountersScratch_;
+    std::vector<int> trackFrameStampsScratch_;
+    std::vector<int> trackSegmentCountersScratch_;
+    std::vector<SynthPatch> loadSafeInstrumentPatchesScratch_;
+    std::vector<unsigned char> loadSafeInstrumentPatchValidScratch_;
+    std::vector<SynthPatch> loadSafeOverridePatchesScratch_;
+    std::vector<unsigned char> loadSafeOverridePatchValidScratch_;
+    std::size_t preparedEventCursor_ = 0;
     std::uint64_t preparedSignature_ = 0;
+    int signatureCheckCooldownFrames_ = 0;
 };
 
 const char* transportStateName(TransportState state);

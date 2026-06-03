@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdio>
@@ -53,7 +54,9 @@ public:
     int frameMin() const;
     int frameMax() const;
     int loadClass() const;
+    int outputPressureLevel();
     std::pair<std::size_t, std::size_t> alsaQueueUsage();
+    std::pair<std::size_t, std::size_t> pipeQueueUsage();
 
 private:
 #if ARACHNO_HAS_ALSA
@@ -62,6 +65,10 @@ private:
     bool enqueueAlsaFrames(const float* left, const float* right, int frames);
     bool startAlsaWriterThread(int sampleRate);
 #endif
+    bool enqueuePipeFrames(const float* left, const float* right, int frames);
+    bool startPipeWriterThread(int sampleRate);
+    void stopPipeWriterThread();
+    void addOutputPressure(int amount);
 
     FILE* audioPipe_ = nullptr;
     bool audioOutputUsesAlsa_ = false;
@@ -69,12 +76,30 @@ private:
     std::vector<float> audioInterleavedFloat_;
     std::vector<short> audioInterleavedS16_;
     std::vector<char> audioPipeBuffer_;
-    int audioFrameMin_ = 536;
-    int audioFrameMax_ = 3216;
-    int audioLoadClass_ = 2;
-    AudioPerformanceMode audioPerformanceMode_ = AudioPerformanceMode::Heavy;
+    int audioFrameMin_ = 384;
+    int audioFrameMax_ = 3072;
+    int audioLoadClass_ = 0;
+    AudioPerformanceMode audioPerformanceMode_ = AudioPerformanceMode::Auto;
     int audioCustomLevel_ = 0;
     std::chrono::steady_clock::time_point lastAudioTuning_ {};
+    std::thread audioPipeWriterThread_;
+    std::mutex audioPipeMutex_;
+    std::condition_variable audioPipeCv_;
+    std::vector<float> audioPipeQueue_;
+    std::size_t audioPipeQueueCapacity_ = 0;
+    std::size_t audioPipeQueueRead_ = 0;
+    std::size_t audioPipeQueueSize_ = 0;
+    bool audioPipeThreadRunning_ = false;
+    bool audioPipeThreadStop_ = false;
+    bool audioPipeHealthy_ = true;
+    std::size_t audioPipeChunkSamples_ = 0;
+    std::atomic<int> outputPressureScore_ {0};
+    std::atomic<int> outputCongestionEvents_ {0};
+    std::atomic<int> outputStarvationEvents_ {0};
+    std::atomic<int> outputXrunRecoveries_ {0};
+    std::atomic<int> outputWriteFailures_ {0};
+    std::chrono::steady_clock::time_point outputPressureLastDecay_ {};
+    std::mutex outputPressureMutex_;
 
 #if ARACHNO_HAS_ALSA
     snd_pcm_t* audioPcm_ = nullptr;

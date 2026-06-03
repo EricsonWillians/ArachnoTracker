@@ -47,9 +47,50 @@ void drawSynthParameterSection(const GuiSynthParamSectionContext& context) {
     std::vector<const SynthParamDef*> visibleDefs;
     visibleDefs.reserve(context.synthParamDefs.size());
     for (const SynthParamDef& def : context.synthParamDefs) {
-        if (synthParamBelongsToPage(def.name, context.synthParamPage)) {
-            visibleDefs.push_back(&def);
+        if (!synthParamBelongsToPage(def.name, context.synthParamPage)) {
+            continue;
         }
+        // When an oscillator target is selected (A/B/C/D), filter to show only
+        // parameters that belong to that oscillator or are global sound-shaping params.
+        if (context.synthParamOscTarget >= 0 && context.synthParamOscTarget <= 3) {
+            const std::string& n = def.name;
+            const char targetChar = static_cast<char>('a' + context.synthParamOscTarget);
+            const std::string targetPrefix = std::string("osc_") + targetChar;
+            const std::string targetPrefixUpper = std::string("OSC ") + static_cast<char>('A' + context.synthParamOscTarget);
+            bool belongsToTarget = false;
+            // Direct per-osc parameters (e.g., osc_a_level, osc_a_detune_cents)
+            if (n.rfind(targetPrefix, 0) == 0) {
+                belongsToTarget = true;
+            }
+            // Global params that affect the selected oscillator on the Sound page
+            else if (context.synthParamPage == 0) {
+                if (n == "oscillator_mix" && context.synthParamOscTarget <= 1) belongsToTarget = true;
+                if (n == "oscillator_c_mix" && context.synthParamOscTarget == 2) belongsToTarget = true;
+                if (n == "oscillator_d_mix" && context.synthParamOscTarget == 3) belongsToTarget = true;
+                if (n == "detune_cents" && context.synthParamOscTarget == 1) belongsToTarget = true;
+                if (n == "detune_c_cents" && context.synthParamOscTarget == 2) belongsToTarget = true;
+                if (n == "detune_d_cents" && context.synthParamOscTarget == 3) belongsToTarget = true;
+                if (n == "pulse_width") belongsToTarget = true;
+                if (n == "pwm_depth") belongsToTarget = true;
+                if (n == "drive") belongsToTarget = true;
+            }
+            // Global params on other pages are still shown
+            else if (context.synthParamPage != 0) {
+                belongsToTarget = true;
+            }
+            // Always show unison/stereo/pan/gain regardless of target
+            if (n.find("unison") != std::string::npos || n == "stereo_spread" || n == "pan" || n == "gain") {
+                belongsToTarget = true;
+            }
+            // Always show sub/noise on Sound page
+            if (context.synthParamPage == 0 && (n.find("sub") != std::string::npos || n.find("noise") != std::string::npos)) {
+                belongsToTarget = true;
+            }
+            if (!belongsToTarget) {
+                continue;
+            }
+        }
+        visibleDefs.push_back(&def);
     }
     if (visibleDefs.empty()) {
         for (const SynthParamDef& def : context.synthParamDefs) {

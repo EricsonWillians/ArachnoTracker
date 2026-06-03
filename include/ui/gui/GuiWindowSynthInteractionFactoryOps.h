@@ -18,7 +18,7 @@ namespace arachno {
 struct GuiWindowSynthInteractionFactoryInput {
     ApplicationSession& session;
     Display* display = nullptr;
-    Window synthWindow = 0;
+    Window& synthWindow;
     Atom wmDelete = 0;
 
     int& synthWindowWidth;

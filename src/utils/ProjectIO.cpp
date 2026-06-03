@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -96,6 +97,7 @@ void saveProject(const Song& song, const std::string& path) {
     if (!out) {
         throw std::runtime_error("failed to open project for writing: " + path);
     }
+    out << std::setprecision(std::numeric_limits<double>::max_digits10);
 
     out << "arachno_project " << projectFileVersion << "\n";
     out << "title " << std::quoted(song.title) << "\n";
@@ -222,6 +224,55 @@ void saveProject(const Song& song, const std::string& path) {
             << " " << patch.oscBDrive
             << " " << patch.oscCDrive
             << " " << patch.oscDDrive
+            << " " << patch.delayMix
+            << " " << patch.delayTime
+            << " " << patch.delayFeedback
+            << " " << patch.delayTone
+            << " " << patch.reverbMix
+            << " " << patch.reverbSize
+            << " " << patch.reverbDamping
+            << " " << patch.reverbPreDelay
+            << " " << patch.vintageDrift
+            << " " << patch.wowFlutter
+            << " " << patch.chorusFeedback
+            << " " << patch.chorusDelay
+            << " " << patch.chorusWidth
+            << " " << patch.chorusEnsemble
+            << " " << patch.delayStereo
+            << " " << patch.delayModDepth
+            << " " << patch.delayDrive
+            << " " << patch.delayDucking
+            << " " << patch.reverbDiffusion
+            << " " << patch.reverbWidth
+            << " " << patch.reverbShimmer
+            << " " << patch.reverbModDepth
+            << " " << patch.tapeColor
+            << " " << patch.airBoost
+            << " " << patch.lowPunch
+            << " " << patch.analogWarmth
+            << " " << patch.voiceSlop
+            << " " << patch.phaseScatter
+            << " " << patch.chorusTone
+            << " " << patch.delayDiffusion
+            << " " << patch.reverbDecay
+            << " " << patch.reverbEarlyMix
+            << " " << patch.consoleCrosstalk
+            << " " << patch.outputGlue
+            << " " << patch.unisonWarp
+            << " " << patch.unisonHumanize
+            << " " << patch.fmColor
+            << " " << patch.fmSpread
+            << " " << patch.chorusJitter
+            << " " << patch.chorusSaturation
+            << " " << patch.delayWow
+            << " " << patch.delayCrossfeed
+            << " " << patch.reverbTone
+            << " " << patch.reverbChorus
+            << " " << patch.reverbBloom
+            << " " << patch.stereoDepth
+            << " " << patch.hifiExciter
+            << " " << patch.outputTransformer
+            << " " << patch.outputSoftClip
             << "\n";
     }
 
@@ -456,6 +507,159 @@ Song loadProject(const std::string& path) {
             >> patch.oscBDrive
             >> patch.oscCDrive
             >> patch.oscDDrive);
+        {
+            double chorusFeedback = patch.chorusFeedback;
+            double chorusDelay = patch.chorusDelay;
+            double chorusWidth = patch.chorusWidth;
+            double delayMix = patch.delayMix;
+            double delayTime = patch.delayTime;
+            double delayFeedback = patch.delayFeedback;
+            double delayTone = patch.delayTone;
+            double reverbMix = patch.reverbMix;
+            double reverbSize = patch.reverbSize;
+            double reverbDamping = patch.reverbDamping;
+            double reverbPreDelay = patch.reverbPreDelay;
+            double vintageDrift = patch.vintageDrift;
+            double wowFlutter = patch.wowFlutter;
+            if (extraIn >> delayMix
+                >> delayTime
+                >> delayFeedback
+                >> delayTone
+                >> reverbMix
+                >> reverbSize
+                >> reverbDamping
+                >> reverbPreDelay
+                >> vintageDrift
+                >> wowFlutter
+                >> chorusFeedback
+                >> chorusDelay
+                >> chorusWidth) {
+                patch.chorusFeedback = chorusFeedback;
+                patch.chorusDelay = chorusDelay;
+                patch.chorusWidth = chorusWidth;
+                patch.delayMix = delayMix;
+                patch.delayTime = delayTime;
+                patch.delayFeedback = delayFeedback;
+                patch.delayTone = delayTone;
+                patch.reverbMix = reverbMix;
+                patch.reverbSize = reverbSize;
+                patch.reverbDamping = reverbDamping;
+                patch.reverbPreDelay = reverbPreDelay;
+                patch.vintageDrift = vintageDrift;
+                patch.wowFlutter = wowFlutter;
+            }
+            double chorusEnsemble = patch.chorusEnsemble;
+            double delayStereo = patch.delayStereo;
+            double delayModDepth = patch.delayModDepth;
+            double delayDrive = patch.delayDrive;
+            double delayDucking = patch.delayDucking;
+            double reverbDiffusion = patch.reverbDiffusion;
+            double reverbWidth = patch.reverbWidth;
+            double reverbShimmer = patch.reverbShimmer;
+            double reverbModDepth = patch.reverbModDepth;
+            double tapeColor = patch.tapeColor;
+            double airBoost = patch.airBoost;
+            double lowPunch = patch.lowPunch;
+            if (extraIn >> chorusEnsemble
+                >> delayStereo
+                >> delayModDepth
+                >> delayDrive
+                >> delayDucking
+                >> reverbDiffusion
+                >> reverbWidth
+                >> reverbShimmer
+                >> reverbModDepth
+                >> tapeColor
+                >> airBoost
+                >> lowPunch) {
+                patch.chorusEnsemble = chorusEnsemble;
+                patch.delayStereo = delayStereo;
+                patch.delayModDepth = delayModDepth;
+                patch.delayDrive = delayDrive;
+                patch.delayDucking = delayDucking;
+                patch.reverbDiffusion = reverbDiffusion;
+                patch.reverbWidth = reverbWidth;
+                patch.reverbShimmer = reverbShimmer;
+                patch.reverbModDepth = reverbModDepth;
+                patch.tapeColor = tapeColor;
+                patch.airBoost = airBoost;
+                patch.lowPunch = lowPunch;
+            }
+            double analogWarmth = patch.analogWarmth;
+            double voiceSlop = patch.voiceSlop;
+            double phaseScatter = patch.phaseScatter;
+            double chorusTone = patch.chorusTone;
+            double delayDiffusion = patch.delayDiffusion;
+            double reverbDecay = patch.reverbDecay;
+            double reverbEarlyMix = patch.reverbEarlyMix;
+            double consoleCrosstalk = patch.consoleCrosstalk;
+            double outputGlue = patch.outputGlue;
+            if (extraIn >> analogWarmth
+                >> voiceSlop
+                >> phaseScatter
+                >> chorusTone
+                >> delayDiffusion
+                >> reverbDecay
+                >> reverbEarlyMix
+                >> consoleCrosstalk
+                >> outputGlue) {
+                patch.analogWarmth = analogWarmth;
+                patch.voiceSlop = voiceSlop;
+                patch.phaseScatter = phaseScatter;
+                patch.chorusTone = chorusTone;
+                patch.delayDiffusion = delayDiffusion;
+                patch.reverbDecay = reverbDecay;
+                patch.reverbEarlyMix = reverbEarlyMix;
+                patch.consoleCrosstalk = consoleCrosstalk;
+                patch.outputGlue = outputGlue;
+            }
+            double unisonWarp = patch.unisonWarp;
+            double unisonHumanize = patch.unisonHumanize;
+            double fmColor = patch.fmColor;
+            double fmSpread = patch.fmSpread;
+            double chorusJitter = patch.chorusJitter;
+            double chorusSaturation = patch.chorusSaturation;
+            double delayWow = patch.delayWow;
+            double delayCrossfeed = patch.delayCrossfeed;
+            double reverbTone = patch.reverbTone;
+            double reverbChorus = patch.reverbChorus;
+            double reverbBloom = patch.reverbBloom;
+            double stereoDepth = patch.stereoDepth;
+            double hifiExciter = patch.hifiExciter;
+            double outputTransformer = patch.outputTransformer;
+            double outputSoftClip = patch.outputSoftClip;
+            if (extraIn >> unisonWarp
+                >> unisonHumanize
+                >> fmColor
+                >> fmSpread
+                >> chorusJitter
+                >> chorusSaturation
+                >> delayWow
+                >> delayCrossfeed
+                >> reverbTone
+                >> reverbChorus
+                >> reverbBloom
+                >> stereoDepth
+                >> hifiExciter
+                >> outputTransformer
+                >> outputSoftClip) {
+                patch.unisonWarp = unisonWarp;
+                patch.unisonHumanize = unisonHumanize;
+                patch.fmColor = fmColor;
+                patch.fmSpread = fmSpread;
+                patch.chorusJitter = chorusJitter;
+                patch.chorusSaturation = chorusSaturation;
+                patch.delayWow = delayWow;
+                patch.delayCrossfeed = delayCrossfeed;
+                patch.reverbTone = reverbTone;
+                patch.reverbChorus = reverbChorus;
+                patch.reverbBloom = reverbBloom;
+                patch.stereoDepth = stereoDepth;
+                patch.hifiExciter = hifiExciter;
+                patch.outputTransformer = outputTransformer;
+                patch.outputSoftClip = outputSoftClip;
+            }
+        }
         patch.oscillatorC = waveformFromIndex(oscCIndex);
         patch.oscillatorD = waveformFromIndex(oscDIndex);
         patch.oscillatorAEnabled = oscAEnabled >= 0.5;

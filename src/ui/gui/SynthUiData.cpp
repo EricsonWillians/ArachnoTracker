@@ -26,11 +26,27 @@ const std::vector<SynthParamDef>& synthParamDefinitions() {
         {"oscillator_mix", "MIX", 0.0, 1.0, 0.02},
         {"oscillator_c_mix", "OSC C MIX", 0.0, 1.0, 0.02},
         {"oscillator_d_mix", "OSC D MIX", 0.0, 1.0, 0.02},
+        {"osc_a_level", "OSC A LVL", 0.0, 1.0, 0.02},
+        {"osc_b_level", "OSC B LVL", 0.0, 1.0, 0.02},
+        {"osc_c_level", "OSC C LVL", 0.0, 1.0, 0.02},
+        {"osc_d_level", "OSC D LVL", 0.0, 1.0, 0.02},
         {"detune_cents", "DETUNE", -48.0, 48.0, 0.5},
         {"detune_c_cents", "DETUNE C", -48.0, 48.0, 0.5},
         {"detune_d_cents", "DETUNE D", -48.0, 48.0, 0.5},
+        {"osc_a_detune_cents", "A DTN", -48.0, 48.0, 0.5},
+        {"osc_b_detune_cents", "B DTN", -48.0, 48.0, 0.5},
+        {"osc_c_detune_cents", "C DTN", -48.0, 48.0, 0.5},
+        {"osc_d_detune_cents", "D DTN", -48.0, 48.0, 0.5},
         {"pulse_width", "PULSE", 0.03, 0.97, 0.01},
+        {"osc_a_pulse_width", "A PULSE", 0.03, 0.97, 0.01},
+        {"osc_b_pulse_width", "B PULSE", 0.03, 0.97, 0.01},
+        {"osc_c_pulse_width", "C PULSE", 0.03, 0.97, 0.01},
+        {"osc_d_pulse_width", "D PULSE", 0.03, 0.97, 0.01},
         {"pwm_depth", "PWM", 0.0, 1.0, 0.02},
+        {"osc_a_pwm_depth", "A PWM", 0.0, 1.0, 0.02},
+        {"osc_b_pwm_depth", "B PWM", 0.0, 1.0, 0.02},
+        {"osc_c_pwm_depth", "C PWM", 0.0, 1.0, 0.02},
+        {"osc_d_pwm_depth", "D PWM", 0.0, 1.0, 0.02},
         {"unison_voices", "UNISON", 1.0, 8.0, 1.0},
         {"unison_detune_cents", "UNI DTN", 0.0, 40.0, 0.5},
         {"stereo_spread", "SPREAD", 0.0, 1.0, 0.02},
@@ -54,6 +70,10 @@ const std::vector<SynthParamDef>& synthParamDefinitions() {
         {"filter_sustain", "F S", 0.0, 1.0, 0.02},
         {"filter_release", "F R", 0.001, 6.0, 0.02},
         {"drive", "DRIVE", 0.0, 1.0, 0.02},
+        {"osc_a_drive", "A DRIVE", 0.0, 1.0, 0.02},
+        {"osc_b_drive", "B DRIVE", 0.0, 1.0, 0.02},
+        {"osc_c_drive", "C DRIVE", 0.0, 1.0, 0.02},
+        {"osc_d_drive", "D DRIVE", 0.0, 1.0, 0.02},
         {"wavefold", "FOLD", 0.0, 1.0, 0.02},
         {"lfo_rate", "LFO", 0.05, 24.0, 0.1},
         {"vibrato_cents", "VIB", 0.0, 120.0, 1.0},
@@ -73,12 +93,32 @@ const std::vector<SynthParamDef>& synthParamDefinitions() {
         {"chorus_mix", "CHORUS", 0.0, 1.0, 0.02},
         {"chorus_rate", "CH RATE", 0.05, 5.0, 0.05},
         {"chorus_depth", "CH DEP", 0.0, 1.0, 0.02},
+        {"chorus_feedback", "CH FB", 0.0, 0.98, 0.02},
+        {"chorus_delay", "CH DLY", 0.0, 1.0, 0.02},
+        {"chorus_width", "CH WID", 0.0, 1.0, 0.02},
+        {"chorus_ensemble", "CH ENS", 0.0, 1.0, 0.02},
         {"bit_crush_enabled", "CRUSH ON", 0.0, 1.0, 1.0},
         {"bit_crush", "CRUSH", 0.0, 1.0, 0.02},
         {"sample_rate_reduction", "SR RED", 0.0, 1.0, 0.02},
         {"comb_mix", "COMB MIX", 0.0, 1.0, 0.02},
         {"comb_time", "COMB T", 0.001, 0.5, 0.005},
         {"comb_feedback", "COMB FB", 0.0, 0.98, 0.02},
+        {"delay_mix", "DLY MIX", 0.0, 1.0, 0.02},
+        {"delay_time", "DLY TIME", 0.0, 1.0, 0.02},
+        {"delay_feedback", "DLY FB", 0.0, 0.98, 0.02},
+        {"delay_tone", "DLY TONE", 0.0, 1.0, 0.02},
+        {"delay_stereo", "DLY STER", 0.0, 1.0, 0.02},
+        {"delay_mod_depth", "DLY MOD", 0.0, 1.0, 0.02},
+        {"delay_drive", "DLY DRV", 0.0, 1.0, 0.02},
+        {"delay_ducking", "DLY DUCK", 0.0, 1.0, 0.02},
+        {"reverb_mix", "REV MIX", 0.0, 1.0, 0.02},
+        {"reverb_size", "REV SIZE", 0.0, 1.0, 0.02},
+        {"reverb_damping", "REV DAMP", 0.0, 1.0, 0.02},
+        {"reverb_pre_delay", "REV PRE", 0.0, 1.0, 0.02},
+        {"reverb_diffusion", "REV DIFF", 0.0, 1.0, 0.02},
+        {"reverb_width", "REV WID", 0.0, 1.0, 0.02},
+        {"reverb_shimmer", "REV SHIM", 0.0, 1.0, 0.02},
+        {"reverb_mod_depth", "REV MOD", 0.0, 1.0, 0.02},
         {"high_pass", "HI PASS", 0.0, 1.0, 0.02},
         {"click", "CLICK", 0.0, 1.0, 0.02},
         {"transient_shape", "TR SHAPE", 0.0, 1.0, 0.02},
@@ -91,7 +131,36 @@ const std::vector<SynthParamDef>& synthParamDefinitions() {
         {"transient_tone", "TR TONE", 0.0, 1.0, 0.02},
         {"transient_decay", "TR DEC", 0.001, 0.25, 0.005},
         {"analog_color", "ANALOG", 0.0, 1.0, 0.02},
+        {"vintage_drift", "DRIFT", 0.0, 1.0, 0.02},
+        {"wow_flutter", "FLUTTER", 0.0, 1.0, 0.02},
         {"tone_tilt", "TILT", -1.0, 1.0, 0.02},
+        {"tape_color", "TAPE", 0.0, 1.0, 0.02},
+        {"air_boost", "AIR", 0.0, 1.0, 0.02},
+        {"low_punch", "PUNCH", 0.0, 1.0, 0.02},
+        {"analog_warmth", "WARMTH", 0.0, 1.0, 0.02},
+        {"voice_slop", "SLOP", 0.0, 1.0, 0.02},
+        {"phase_scatter", "PHASE", 0.0, 1.0, 0.02},
+        {"unison_warp", "UNI WARP", 0.0, 1.0, 0.02},
+        {"unison_humanize", "UNI HUM", 0.0, 1.0, 0.02},
+        {"fm_color", "FM COLOR", 0.0, 1.0, 0.02},
+        {"fm_spread", "FM SPRD", 0.0, 1.0, 0.02},
+        {"chorus_tone", "CH TONE", 0.0, 1.0, 0.02},
+        {"chorus_jitter", "CH JIT", 0.0, 1.0, 0.02},
+        {"chorus_saturation", "CH SAT", 0.0, 1.0, 0.02},
+        {"delay_diffusion", "DLY DIFF", 0.0, 1.0, 0.02},
+        {"delay_wow", "DLY WOW", 0.0, 1.0, 0.02},
+        {"delay_crossfeed", "DLY XFD", 0.0, 1.0, 0.02},
+        {"reverb_decay", "REV DEC", 0.0, 1.0, 0.02},
+        {"reverb_early_mix", "REV ERLY", 0.0, 1.0, 0.02},
+        {"reverb_tone", "REV TONE", 0.0, 1.0, 0.02},
+        {"reverb_chorus", "REV CHR", 0.0, 1.0, 0.02},
+        {"reverb_bloom", "REV BLM", 0.0, 1.0, 0.02},
+        {"console_crosstalk", "XTALK", 0.0, 1.0, 0.02},
+        {"stereo_depth", "ST DEPTH", 0.0, 1.0, 0.02},
+        {"hifi_exciter", "EXCITER", 0.0, 1.0, 0.02},
+        {"output_transformer", "TRANS", 0.0, 1.0, 0.02},
+        {"output_soft_clip", "SOFTCLIP", 0.0, 1.0, 0.02},
+        {"output_glue", "GLUE", 0.0, 1.0, 0.02},
         {"amp_attack", "A", 0.001, 4.0, 0.01},
         {"amp_decay", "D", 0.001, 4.0, 0.01},
         {"amp_sustain", "S", 0.0, 1.0, 0.02},
@@ -114,6 +183,8 @@ bool synthParamBelongsToPage(const std::string& name, int page) {
         || n == "filter_drive"
         || n == "filter_keytrack";
     const bool fx = n.find("chorus") != std::string::npos
+        || n.find("delay_") != std::string::npos
+        || n.find("reverb_") != std::string::npos
         || n.find("ring") != std::string::npos
         || n.find("fm_") != std::string::npos
         || n.find("sync") != std::string::npos
@@ -125,7 +196,22 @@ bool synthParamBelongsToPage(const std::string& name, int page) {
         || n.find("click") != std::string::npos
         || n.find("transient") != std::string::npos
         || n.find("analog") != std::string::npos
-        || n.find("tilt") != std::string::npos;
+        || n.find("drift") != std::string::npos
+        || n.find("flutter") != std::string::npos
+        || n.find("tilt") != std::string::npos
+        || n.find("tape") != std::string::npos
+        || n.find("air") != std::string::npos
+        || n.find("punch") != std::string::npos
+        || n.find("warmth") != std::string::npos
+        || n.find("slop") != std::string::npos
+        || n.find("scatter") != std::string::npos
+        || n.find("xtalk") != std::string::npos
+        || n.find("crosstalk") != std::string::npos
+        || n.find("stereo_depth") != std::string::npos
+        || n.find("exciter") != std::string::npos
+        || n.find("transformer") != std::string::npos
+        || n.find("soft_clip") != std::string::npos
+        || n.find("glue") != std::string::npos;
 
     if (page == 0) {
         return osc || n.find("detune") != std::string::npos || n == "pulse_width" || n == "pwm_depth"
@@ -213,12 +299,32 @@ double getSynthParameterValue(const SynthPatch& patch, const std::string& name) 
     if (name == "chorus_mix") return patch.chorusMix;
     if (name == "chorus_rate") return patch.chorusRate;
     if (name == "chorus_depth") return patch.chorusDepth;
+    if (name == "chorus_feedback") return patch.chorusFeedback;
+    if (name == "chorus_delay") return patch.chorusDelay;
+    if (name == "chorus_width") return patch.chorusWidth;
+    if (name == "chorus_ensemble") return patch.chorusEnsemble;
     if (name == "bit_crush_enabled") return patch.bitCrushEnabled ? 1.0 : 0.0;
     if (name == "bit_crush") return patch.bitCrush;
     if (name == "sample_rate_reduction") return patch.sampleRateReduction;
     if (name == "comb_mix") return patch.combMix;
     if (name == "comb_time") return patch.combTime;
     if (name == "comb_feedback") return patch.combFeedback;
+    if (name == "delay_mix") return patch.delayMix;
+    if (name == "delay_time") return patch.delayTime;
+    if (name == "delay_feedback") return patch.delayFeedback;
+    if (name == "delay_tone") return patch.delayTone;
+    if (name == "delay_stereo") return patch.delayStereo;
+    if (name == "delay_mod_depth") return patch.delayModDepth;
+    if (name == "delay_drive") return patch.delayDrive;
+    if (name == "delay_ducking") return patch.delayDucking;
+    if (name == "reverb_mix") return patch.reverbMix;
+    if (name == "reverb_size") return patch.reverbSize;
+    if (name == "reverb_damping") return patch.reverbDamping;
+    if (name == "reverb_pre_delay") return patch.reverbPreDelay;
+    if (name == "reverb_diffusion") return patch.reverbDiffusion;
+    if (name == "reverb_width") return patch.reverbWidth;
+    if (name == "reverb_shimmer") return patch.reverbShimmer;
+    if (name == "reverb_mod_depth") return patch.reverbModDepth;
     if (name == "high_pass") return patch.highPass;
     if (name == "click") return patch.click;
     if (name == "transient_shape") return patch.transientShape;
@@ -231,7 +337,36 @@ double getSynthParameterValue(const SynthPatch& patch, const std::string& name) 
     if (name == "transient_tone") return patch.transientTone;
     if (name == "transient_decay") return patch.transientDecay;
     if (name == "analog_color") return patch.analogColor;
+    if (name == "vintage_drift") return patch.vintageDrift;
+    if (name == "wow_flutter") return patch.wowFlutter;
     if (name == "tone_tilt") return patch.toneTilt;
+    if (name == "tape_color") return patch.tapeColor;
+    if (name == "air_boost") return patch.airBoost;
+    if (name == "low_punch") return patch.lowPunch;
+    if (name == "analog_warmth") return patch.analogWarmth;
+    if (name == "voice_slop") return patch.voiceSlop;
+    if (name == "phase_scatter") return patch.phaseScatter;
+    if (name == "unison_warp") return patch.unisonWarp;
+    if (name == "unison_humanize") return patch.unisonHumanize;
+    if (name == "fm_color") return patch.fmColor;
+    if (name == "fm_spread") return patch.fmSpread;
+    if (name == "chorus_tone") return patch.chorusTone;
+    if (name == "chorus_jitter") return patch.chorusJitter;
+    if (name == "chorus_saturation") return patch.chorusSaturation;
+    if (name == "delay_diffusion") return patch.delayDiffusion;
+    if (name == "delay_wow") return patch.delayWow;
+    if (name == "delay_crossfeed") return patch.delayCrossfeed;
+    if (name == "reverb_decay") return patch.reverbDecay;
+    if (name == "reverb_early_mix") return patch.reverbEarlyMix;
+    if (name == "reverb_tone") return patch.reverbTone;
+    if (name == "reverb_chorus") return patch.reverbChorus;
+    if (name == "reverb_bloom") return patch.reverbBloom;
+    if (name == "console_crosstalk") return patch.consoleCrosstalk;
+    if (name == "stereo_depth") return patch.stereoDepth;
+    if (name == "hifi_exciter") return patch.hifiExciter;
+    if (name == "output_transformer") return patch.outputTransformer;
+    if (name == "output_soft_clip") return patch.outputSoftClip;
+    if (name == "output_glue") return patch.outputGlue;
     if (name == "unison_voices") return static_cast<double>(patch.unisonVoices);
     if (name == "stereo_spread") return patch.stereoSpread;
     if (name == "gain") return patch.gain;
@@ -345,11 +480,60 @@ std::string synthParamTooltipText(const std::string& name) {
     if (base == "chorus_mix") return "Chorus wet/dry balance.";
     if (base == "chorus_rate") return "Chorus modulation speed.";
     if (base == "chorus_depth") return "Chorus modulation depth.";
+    if (base == "chorus_feedback") return "Chorus recirculation for denser ensemble tails.";
+    if (base == "chorus_delay") return "Base chorus delay time. Higher values feel wider and softer.";
+    if (base == "chorus_width") return "Stereo phase spread between left/right chorus movement.";
+    if (base == "chorus_ensemble") return "Adds extra chorus voices for rich 80s/90s ensemble width.";
     if (base == "bit_crush") return "Bit depth reduction for lo-fi character.";
     if (base == "sample_rate_reduction") return "Sample-rate reduction amount.";
     if (base == "comb_mix") return "Comb filter wet/dry mix.";
     if (base == "comb_time") return "Comb delay time.";
     if (base == "comb_feedback") return "Comb feedback for resonant tails.";
+    if (base == "delay_mix") return "Stereo delay wet/dry amount.";
+    if (base == "delay_time") return "Stereo delay time from slapback to echo.";
+    if (base == "delay_feedback") return "Delay feedback for repeat length and density.";
+    if (base == "delay_tone") return "Delay damping tone. Lower is darker, higher is brighter.";
+    if (base == "delay_stereo") return "Ping-pong and stereo offset amount in delay repeats.";
+    if (base == "delay_mod_depth") return "Tape-style modulation depth on delay time.";
+    if (base == "delay_drive") return "Saturation in delay feedback path for analog echo thickness.";
+    if (base == "delay_ducking") return "Ducks delay repeats under the dry signal for mix clarity.";
+    if (base == "reverb_mix") return "Hall-space blend amount.";
+    if (base == "reverb_size") return "Virtual room size and diffusion span.";
+    if (base == "reverb_damping") return "High-frequency damping in the reverb tail.";
+    if (base == "reverb_pre_delay") return "Pre-delay before the reverb bloom starts.";
+    if (base == "reverb_diffusion") return "Controls reverb density and smoothness of late reflections.";
+    if (base == "reverb_width") return "Stereo width of reverb tail.";
+    if (base == "reverb_shimmer") return "Adds shimmering high overtone glow to the reverb tail.";
+    if (base == "reverb_mod_depth") return "Subtle motion in reverb taps for expensive hardware movement.";
+    if (base == "vintage_drift") return "Analog oscillator drift intensity and voice wander.";
+    if (base == "wow_flutter") return "Slow tape-like wow/flutter pitch modulation.";
+    if (base == "tape_color") return "Tape-like glue saturation on the voice output stage.";
+    if (base == "air_boost") return "Adds polished top-end presence and sheen.";
+    if (base == "low_punch") return "Adds controlled low-end body and punch.";
+    if (base == "analog_warmth") return "Adds low-order analog harmonics and rounded transistor warmth.";
+    if (base == "voice_slop") return "Per-voice oscillator slop for expensive vintage polysynth movement.";
+    if (base == "phase_scatter") return "Randomizes oscillator phase and stereo decorrelation for thicker starts.";
+    if (base == "unison_warp") return "Curves unison detune spacing for JP/Juno-style edge emphasis.";
+    if (base == "unison_humanize") return "Adds subtle per-voice tuning variance for expensive analog behavior.";
+    if (base == "fm_color") return "FM waveshaping color from smooth sine to bright folded metal.";
+    if (base == "fm_spread") return "Offsets FM ratios across unison voices for wider harmonics.";
+    if (base == "chorus_tone") return "Brightness control for chorus wet signal.";
+    if (base == "chorus_jitter") return "BBD-style clock jitter for vintage chorus motion.";
+    if (base == "chorus_saturation") return "Saturates chorus returns for thick premium ensemble tone.";
+    if (base == "delay_diffusion") return "Smears delay repeats with analog BBD-style diffusion.";
+    if (base == "delay_wow") return "Independent wow/flutter character in delay repeats.";
+    if (base == "delay_crossfeed") return "Stereo cross-feedback amount between delay channels.";
+    if (base == "reverb_decay") return "Extends reverb tail length and sustain.";
+    if (base == "reverb_early_mix") return "Blends in early reflections for premium room definition.";
+    if (base == "reverb_tone") return "Reverb spectral tone from dark velvety to bright glossy.";
+    if (base == "reverb_chorus") return "Adds chorused modulation to the reverb tail.";
+    if (base == "reverb_bloom") return "Expands low-mid bloom and tail bloom in the reverb body.";
+    if (base == "console_crosstalk") return "Subtle channel bleed for analog console stereo cohesion.";
+    if (base == "stereo_depth") return "Pushes stereo side depth while keeping mono center stable.";
+    if (base == "hifi_exciter") return "High-fidelity harmonic exciter for polished top-end detail.";
+    if (base == "output_transformer") return "Transformer-like output stage color and low-mid heft.";
+    if (base == "output_soft_clip") return "Premium bus soft clipping before the final output limiter.";
+    if (base == "output_glue") return "Per-voice glue saturation/compression for cohesive mix placement.";
     if (base == "pan") return "Stereo placement of the voice.";
     if (base == "amp_attack") return "Volume envelope attack time.";
     if (base == "amp_decay") return "Volume envelope decay time.";
@@ -364,4 +548,3 @@ std::string synthParamTooltipText(const std::string& name) {
 }
 
 } // namespace arachno
-

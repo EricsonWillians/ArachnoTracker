@@ -140,8 +140,11 @@ Common automation names include `mix`, `detune`, `pulse_width`, `pwm`,
 `unison_detune`, `spread`, `sub`, `noise`, `cutoff`, `resonance`,
 `filter_env`, `pitch_env`, `pitch_decay`, `click`, `transient_noise`,
 `transient_decay`, `lfo_rate`, `vibrato`, `tremolo`, `ring_mod`, `hard_sync`,
-`drive`, `bitcrush`, `sample_reduce`, `highpass`, `gain`, `pan`, `attack`,
-`decay`, `sustain`, `release`, and filter envelope fields such as
+`drive`, `bitcrush`, `sample_reduce`, `highpass`, `gain`, `pan`,
+`chorus_feedback`, `chorus_delay`, `chorus_width`, `delay_mix`,
+`delay_time`, `delay_feedback`, `delay_tone`, `reverb_mix`, `reverb_size`,
+`reverb_damping`, `reverb_pre_delay`, `vintage_drift`, `wow_flutter`,
+`attack`, `decay`, `sustain`, `release`, and filter envelope fields such as
 `filter_attack`.
 
 ## Generative Helpers

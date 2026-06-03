@@ -217,6 +217,10 @@ void testSynthParameterSurface() {
         {"chorus_mix", 0.28},
         {"chorus_rate", 0.66},
         {"chorus_depth", 0.42},
+        {"chorus_feedback", 0.19},
+        {"chorus_delay", 0.44},
+        {"chorus_width", 0.71},
+        {"chorus_ensemble", 0.36},
         {"unison_voices", 4.0},
         {"unison_detune_cents", 14.0},
         {"stereo_spread", 0.71},
@@ -254,6 +258,22 @@ void testSynthParameterSurface() {
         {"comb_mix", 0.33},
         {"comb_time", 0.09},
         {"comb_feedback", 0.42},
+        {"delay_mix", 0.16},
+        {"delay_time", 0.29},
+        {"delay_feedback", 0.35},
+        {"delay_tone", 0.62},
+        {"delay_stereo", 0.42},
+        {"delay_mod_depth", 0.48},
+        {"delay_drive", 0.27},
+        {"delay_ducking", 0.23},
+        {"reverb_mix", 0.14},
+        {"reverb_size", 0.68},
+        {"reverb_damping", 0.47},
+        {"reverb_pre_delay", 0.12},
+        {"reverb_diffusion", 0.61},
+        {"reverb_width", 0.58},
+        {"reverb_shimmer", 0.22},
+        {"reverb_mod_depth", 0.24},
         {"high_pass", 0.18},
         {"click", 0.14},
         {"transient_shape", 0.35},
@@ -266,7 +286,12 @@ void testSynthParameterSurface() {
         {"transient_tone", 0.77},
         {"transient_decay", 0.04},
         {"analog_color", 0.58},
+        {"vintage_drift", 0.63},
+        {"wow_flutter", 0.21},
         {"tone_tilt", -0.24},
+        {"tape_color", 0.32},
+        {"air_boost", 0.27},
+        {"low_punch", 0.35},
         {"gain", 0.67},
         {"pan", -0.37},
         {"amp_attack", 0.012},
@@ -2416,6 +2441,18 @@ void testProjectRoundTrip() {
     assert(loaded.instruments[0].patch.pulseWidth == original.instruments[0].patch.pulseWidth);
     assert(loaded.instruments[3].patch.fmAmount == original.instruments[3].patch.fmAmount);
     assert(loaded.instruments[4].patch.chorusMix == original.instruments[4].patch.chorusMix);
+    assert(loaded.instruments[4].patch.chorusFeedback == original.instruments[4].patch.chorusFeedback);
+    assert(loaded.instruments[4].patch.delayMix == original.instruments[4].patch.delayMix);
+    assert(loaded.instruments[4].patch.reverbMix == original.instruments[4].patch.reverbMix);
+    assert(loaded.instruments[4].patch.delayStereo == original.instruments[4].patch.delayStereo);
+    assert(loaded.instruments[4].patch.reverbDiffusion == original.instruments[4].patch.reverbDiffusion);
+    assert(loaded.instruments[4].patch.tapeColor == original.instruments[4].patch.tapeColor);
+    assert(loaded.instruments[4].patch.analogWarmth == original.instruments[4].patch.analogWarmth);
+    assert(loaded.instruments[4].patch.phaseScatter == original.instruments[4].patch.phaseScatter);
+    assert(loaded.instruments[4].patch.delayDiffusion == original.instruments[4].patch.delayDiffusion);
+    assert(loaded.instruments[4].patch.outputGlue == original.instruments[4].patch.outputGlue);
+    assert(loaded.instruments[4].patch.vintageDrift == original.instruments[4].patch.vintageDrift);
+    assert(loaded.instruments[4].patch.wowFlutter == original.instruments[4].patch.wowFlutter);
     assert(loaded.patterns.front().step(0, 0).note.has_value());
     assert(loaded.patterns.front().step(0, 0).note->midi == 36);
     std::filesystem::remove(path);
@@ -3183,10 +3220,30 @@ void testPatchRoundTrip() {
     patch.chorusMix = 0.31;
     patch.chorusRate = 0.47;
     patch.chorusDepth = 0.53;
+    patch.chorusFeedback = 0.17;
+    patch.chorusDelay = 0.49;
+    patch.chorusWidth = 0.74;
+    patch.chorusEnsemble = 0.46;
     patch.ringMod = 0.33;
     patch.hardSync = 0.27;
     patch.bitCrush = 0.18;
     patch.sampleRateReduction = 0.21;
+    patch.delayMix = 0.19;
+    patch.delayTime = 0.26;
+    patch.delayFeedback = 0.37;
+    patch.delayTone = 0.59;
+    patch.delayStereo = 0.44;
+    patch.delayModDepth = 0.41;
+    patch.delayDrive = 0.28;
+    patch.delayDucking = 0.24;
+    patch.reverbMix = 0.23;
+    patch.reverbSize = 0.68;
+    patch.reverbDamping = 0.41;
+    patch.reverbPreDelay = 0.14;
+    patch.reverbDiffusion = 0.62;
+    patch.reverbWidth = 0.57;
+    patch.reverbShimmer = 0.18;
+    patch.reverbModDepth = 0.26;
     patch.highPass = 0.42;
     patch.click = 0.2;
     patch.noiseTone = 0.74;
@@ -3199,6 +3256,20 @@ void testPatchRoundTrip() {
     patch.transientBurstDecay = 0.64;
     patch.transientTone = 0.91;
     patch.transientDecay = 0.018;
+    patch.vintageDrift = 0.61;
+    patch.wowFlutter = 0.22;
+    patch.tapeColor = 0.31;
+    patch.airBoost = 0.29;
+    patch.lowPunch = 0.38;
+    patch.analogWarmth = 0.67;
+    patch.voiceSlop = 0.44;
+    patch.phaseScatter = 0.52;
+    patch.chorusTone = 0.71;
+    patch.delayDiffusion = 0.39;
+    patch.reverbDecay = 0.83;
+    patch.reverbEarlyMix = 0.28;
+    patch.consoleCrosstalk = 0.11;
+    patch.outputGlue = 0.49;
     patch.ampEnvelope.attack = 0.03;
 
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "arachno-glass.arachnopatch";
@@ -3222,10 +3293,30 @@ void testPatchRoundTrip() {
     assert(loaded.chorusMix == 0.31);
     assert(loaded.chorusRate == 0.47);
     assert(loaded.chorusDepth == 0.53);
+    assert(loaded.chorusFeedback == 0.17);
+    assert(loaded.chorusDelay == 0.49);
+    assert(loaded.chorusWidth == 0.74);
+    assert(loaded.chorusEnsemble == 0.46);
     assert(loaded.ringMod == 0.33);
     assert(loaded.hardSync == 0.27);
     assert(loaded.bitCrush == 0.18);
     assert(loaded.sampleRateReduction == 0.21);
+    assert(loaded.delayMix == 0.19);
+    assert(loaded.delayTime == 0.26);
+    assert(loaded.delayFeedback == 0.37);
+    assert(loaded.delayTone == 0.59);
+    assert(loaded.delayStereo == 0.44);
+    assert(loaded.delayModDepth == 0.41);
+    assert(loaded.delayDrive == 0.28);
+    assert(loaded.delayDucking == 0.24);
+    assert(loaded.reverbMix == 0.23);
+    assert(loaded.reverbSize == 0.68);
+    assert(loaded.reverbDamping == 0.41);
+    assert(loaded.reverbPreDelay == 0.14);
+    assert(loaded.reverbDiffusion == 0.62);
+    assert(loaded.reverbWidth == 0.57);
+    assert(loaded.reverbShimmer == 0.18);
+    assert(loaded.reverbModDepth == 0.26);
     assert(loaded.highPass == 0.42);
     assert(loaded.click == 0.2);
     assert(loaded.noiseTone == 0.74);
@@ -3238,6 +3329,20 @@ void testPatchRoundTrip() {
     assert(loaded.transientBurstDecay == 0.64);
     assert(loaded.transientTone == 0.91);
     assert(loaded.transientDecay == 0.018);
+    assert(loaded.vintageDrift == 0.61);
+    assert(loaded.wowFlutter == 0.22);
+    assert(loaded.tapeColor == 0.31);
+    assert(loaded.airBoost == 0.29);
+    assert(loaded.lowPunch == 0.38);
+    assert(loaded.analogWarmth == 0.67);
+    assert(loaded.voiceSlop == 0.44);
+    assert(loaded.phaseScatter == 0.52);
+    assert(loaded.chorusTone == 0.71);
+    assert(loaded.delayDiffusion == 0.39);
+    assert(loaded.reverbDecay == 0.83);
+    assert(loaded.reverbEarlyMix == 0.28);
+    assert(loaded.consoleCrosstalk == 0.11);
+    assert(loaded.outputGlue == 0.49);
     assert(loaded.ampEnvelope.attack == 0.03);
     std::filesystem::remove(path);
 }

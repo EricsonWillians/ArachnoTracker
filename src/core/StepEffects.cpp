@@ -82,19 +82,23 @@ bool applyDelayEffectAlias(const EffectCommand& effect, StepSynthesisState& stat
     bool touched = false;
     if (const auto mix = findParameterValue(effect, {"value", "mix", "amount", "wet"}); mix.has_value()) {
         state.patch.combMix = clamp01(*mix);
+        state.patch.delayMix = clamp01(*mix);
         touched = true;
     }
     if (const auto time = findParameterValue(effect, {"time", "delay_time", "seconds"}); time.has_value()) {
         state.patch.combTime = normalizedToRange(*time, 0.01, 0.55);
+        state.patch.delayTime = normalizedToRange(*time, 0.0, 1.0);
         touched = true;
     }
     if (const auto feedback = findParameterValue(effect, {"feedback", "fb"}); feedback.has_value()) {
         state.patch.combFeedback = clamp01(*feedback);
+        state.patch.delayFeedback = clamp01(*feedback);
         touched = true;
     }
     if (const auto tone = findParameterValue(effect, {"tone", "damping", "damp"}); tone.has_value()) {
         const double damp = clamp01(*tone);
         state.patch.cutoff = std::clamp(0.98 - damp * 0.62, 0.2, 1.0);
+        state.patch.delayTone = 1.0 - damp;
         touched = true;
     }
     return touched;
@@ -109,17 +113,21 @@ bool applyReverbEffectAlias(const EffectCommand& effect, StepSynthesisState& sta
 
     if (findParameterValue(effect, {"value", "mix", "amount", "wet"}).has_value()) {
         state.patch.combMix = std::max(state.patch.combMix, mix * 0.78);
+        state.patch.reverbMix = std::max(state.patch.reverbMix, mix);
         state.patch.chorusMix = std::max(state.patch.chorusMix, mix * 0.46);
         state.patch.chorusEnabled = state.patch.chorusMix > 0.0001;
         touched = true;
     }
     if (findParameterValue(effect, {"size", "room"}).has_value()) {
         state.patch.combTime = normalizedToRange(size, 0.03, 0.8);
+        state.patch.reverbSize = size;
+        state.patch.reverbPreDelay = std::clamp(size * 0.55, 0.0, 1.0);
         touched = true;
     }
     if (findParameterValue(effect, {"damping", "damp"}).has_value()) {
         state.patch.cutoff = std::clamp(0.96 - damp * 0.68, 0.18, 1.0);
         state.patch.toneTilt = std::clamp(state.patch.toneTilt - damp * 0.32, -1.0, 1.0);
+        state.patch.reverbDamping = damp;
         touched = true;
     }
     if (findParameterValue(effect, {"width", "stereo"}).has_value()) {
