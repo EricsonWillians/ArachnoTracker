@@ -272,6 +272,7 @@ private:
     double outputDcInputRight_ = 0.0;
     double outputDcOutputRight_ = 0.0;
     double outputLimiterGain_ = 1.0;
+    double truePeakLimiterGain_ = 1.0;
     double outputPeakFollower_ = 0.0;
     double outputRmsFollower_ = 0.0;
     double smoothedDspLoadPercent_ = 0.0;

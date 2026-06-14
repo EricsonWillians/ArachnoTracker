@@ -17,6 +17,9 @@
 namespace arachno {
 
 namespace {
+constexpr double kCompetitionMidiQuality = 0.82;
+constexpr double kCompetitionMidiQualityPercussive = 0.76;
+
 struct MidiMessage {
     enum class Kind {
         NoteOn,
@@ -3540,6 +3543,22 @@ SynthPatch buildPatchForLane(
         patch.combMix = std::max(patch.combMix, 0.18);
         patch.ampEnvelope.release = std::max(patch.ampEnvelope.release, 0.28);
     }
+    const bool percussive = laneLower.find("drum") != std::string::npos
+        || laneLower.find("perc") != std::string::npos
+        || laneLower.find("hat") != std::string::npos
+        || laneLower.find("kick") != std::string::npos
+        || laneLower.find("snare") != std::string::npos;
+    applyCompetitionPresetQuality(
+        patch,
+        percussive ? kCompetitionMidiQualityPercussive : kCompetitionMidiQuality,
+        percussive);
+    patch.hifiExciter = std::clamp(patch.hifiExciter, 0.0, 0.18);
+    patch.outputTransformer = std::clamp(patch.outputTransformer, 0.0, 0.22);
+    patch.outputSoftClip = std::clamp(patch.outputSoftClip, 0.0, 0.18);
+    patch.outputGlue = std::clamp(patch.outputGlue, 0.0, 0.26);
+    patch.analogColor = std::clamp(patch.analogColor, 0.0, 0.82);
+    patch.analogWarmth = std::clamp(patch.analogWarmth, 0.0, 0.90);
+    patch.toneTilt = std::clamp(patch.toneTilt, -0.42, 0.55);
 
     return patch;
 }

@@ -15,6 +15,7 @@ from .notes import midi_to_note_name, note_name_to_midi
 from .plugins import load_patch_plugin
 from .templates import darkwave_ebm_starter
 from . import generative, presets
+from .presets import apply_competition_quality
 
 __all__ = [
     "EditScript",
@@ -33,6 +34,7 @@ __all__ = [
     "midi_to_note_name",
     "note_name_to_midi",
     "presets",
+    "apply_competition_quality",
     "save_patch",
     "save_project",
 ]

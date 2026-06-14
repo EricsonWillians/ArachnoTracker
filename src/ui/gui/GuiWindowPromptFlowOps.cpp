@@ -28,6 +28,7 @@ GuiWindowPromptFlowContext makePromptFlowContextFromWindowState(const GuiWindowP
         input.midiImportSplitByTrack,
         input.lastAction,
         input.synthWindowNeedsRedraw,
+        input.refreshSnapshot,
         input.targetSongLengthMinutes,
         input.activePatternRows,
         input.keyboardSelectionActive,
@@ -80,6 +81,7 @@ void runPromptFlowLifecycleAction(const GuiWindowPromptFlowContext& context, con
             context.unsavedPrompt,
             context.hasDeferredPostSaveAction,
             context.deferredPostSaveAction,
+            context.refreshSnapshot,
             context.beginInlinePrompt},
         request);
 }

@@ -64,63 +64,277 @@ std::string lowerCopy(std::string value) {
     return value;
 }
 
+bool containsToken(const std::string& text, const std::string& token) {
+    return text.find(token) != std::string::npos;
+}
+
+bool isBassPatch(const SynthPatch& patch) {
+    const std::string lowerName = lowerCopy(patch.name);
+    return containsToken(lowerName, "bass") || containsToken(lowerName, "sub destroyer")
+        || containsToken(lowerName, "ebm monolith") || containsToken(lowerName, "reese");
+}
+
+bool isMelodicPatch(const SynthPatch& patch) {
+    const std::string lowerName = lowerCopy(patch.name);
+    return containsToken(lowerName, "lead") || containsToken(lowerName, "pad") || containsToken(lowerName, "arp")
+        || containsToken(lowerName, "stab") || containsToken(lowerName, "drone")
+        || containsToken(lowerName, "bell") || containsToken(lowerName, "choir");
+}
+
+constexpr double kCompetitionPresetPolishMelodic = 0.66;
+constexpr double kCompetitionPresetPolishPercussive = 0.60;
+constexpr double kCompetitionPresetPolishSub = 0.66;
+constexpr double kCompetitionPresetPolishInit = 0.46;
+
 void applyVintageHiFiPolish(SynthPatch& patch, double intensity, bool percussive) {
     const double t = std::clamp(intensity, 0.0, 1.0);
-    patch.analogColor = std::clamp(std::max(patch.analogColor, 0.44 + t * 0.34), 0.0, 1.0);
-    patch.analogWarmth = std::clamp(std::max(patch.analogWarmth, 0.38 + t * 0.44), 0.0, 1.0);
-    patch.voiceSlop = std::clamp(std::max(patch.voiceSlop, 0.20 + t * 0.36), 0.0, 1.0);
-    patch.phaseScatter = std::clamp(std::max(patch.phaseScatter, 0.22 + t * 0.44), 0.0, 1.0);
-    patch.unisonWarp = std::clamp(std::max(patch.unisonWarp, 0.10 + t * 0.52), 0.0, 1.0);
-    patch.unisonHumanize = std::clamp(std::max(patch.unisonHumanize, 0.16 + t * 0.58), 0.0, 1.0);
-    patch.fmColor = std::clamp(std::max(patch.fmColor, 0.34 + t * 0.46), 0.0, 1.0);
-    patch.fmSpread = std::clamp(std::max(patch.fmSpread, 0.08 + t * 0.42), 0.0, 1.0);
-    patch.chorusTone = std::clamp(std::max(patch.chorusTone, 0.46 + t * 0.34), 0.0, 1.0);
-    patch.chorusJitter = std::clamp(std::max(patch.chorusJitter, 0.14 + t * 0.52), 0.0, 1.0);
-    patch.chorusSaturation = std::clamp(std::max(patch.chorusSaturation, 0.12 + t * 0.56), 0.0, 1.0);
-    patch.delayDiffusion = std::clamp(std::max(patch.delayDiffusion, 0.18 + t * 0.48), 0.0, 1.0);
-    patch.delayWow = std::clamp(std::max(patch.delayWow, 0.12 + t * 0.56), 0.0, 1.0);
-    patch.delayCrossfeed = std::clamp(std::max(patch.delayCrossfeed, 0.20 + t * 0.52), 0.0, 1.0);
-    patch.reverbDecay = std::clamp(std::max(patch.reverbDecay, 0.40 + t * 0.52), 0.0, 1.0);
-    patch.reverbEarlyMix = std::clamp(std::max(patch.reverbEarlyMix, 0.16 + t * 0.36), 0.0, 1.0);
-    patch.reverbTone = std::clamp(std::max(patch.reverbTone, 0.30 + t * 0.52), 0.0, 1.0);
-    patch.reverbChorus = std::clamp(std::max(patch.reverbChorus, 0.08 + t * 0.46), 0.0, 1.0);
-    patch.reverbBloom = std::clamp(std::max(patch.reverbBloom, 0.12 + t * 0.54), 0.0, 1.0);
-    patch.consoleCrosstalk = std::clamp(std::max(patch.consoleCrosstalk, 0.04 + t * 0.16), 0.0, 1.0);
-    patch.stereoDepth = std::clamp(std::max(patch.stereoDepth, 0.12 + t * 0.56), 0.0, 1.0);
-    patch.hifiExciter = std::clamp(std::max(patch.hifiExciter, 0.12 + t * 0.58), 0.0, 1.0);
-    patch.outputTransformer = std::clamp(std::max(patch.outputTransformer, 0.12 + t * 0.52), 0.0, 1.0);
-    patch.outputSoftClip = std::clamp(std::max(patch.outputSoftClip, 0.14 + t * 0.56), 0.0, 1.0);
-    patch.outputGlue = std::clamp(std::max(patch.outputGlue, 0.22 + t * 0.52), 0.0, 1.0);
-    patch.tapeColor = std::clamp(std::max(patch.tapeColor, 0.10 + t * 0.44), 0.0, 1.0);
-    patch.airBoost = std::clamp(std::max(patch.airBoost, 0.10 + t * 0.44), 0.0, 1.0);
-    patch.lowPunch = std::clamp(std::max(patch.lowPunch, 0.12 + t * 0.42), 0.0, 1.0);
-    patch.wowFlutter = std::clamp(std::max(patch.wowFlutter, 0.05 + t * 0.36), 0.0, 1.0);
-    patch.vintageDrift = std::clamp(std::max(patch.vintageDrift, 0.24 + t * 0.52), 0.0, 1.0);
-    patch.chorusEnsemble = std::clamp(std::max(patch.chorusEnsemble, 0.14 + t * 0.58), 0.0, 1.0);
-    patch.chorusFeedback = std::clamp(std::max(patch.chorusFeedback, 0.08 + t * 0.52), 0.0, 0.98);
-    patch.chorusDelay = std::clamp(std::max(patch.chorusDelay, 0.14 + t * 0.44), 0.0, 1.0);
-    patch.chorusWidth = std::clamp(std::max(patch.chorusWidth, 0.32 + t * 0.52), 0.0, 1.0);
-    patch.delayDrive = std::clamp(std::max(patch.delayDrive, 0.08 + t * 0.52), 0.0, 1.0);
-    patch.delayModDepth = std::clamp(std::max(patch.delayModDepth, 0.12 + t * 0.54), 0.0, 1.0);
-    patch.delayStereo = std::clamp(std::max(patch.delayStereo, 0.16 + t * 0.56), 0.0, 1.0);
-    patch.delayDucking = std::clamp(std::max(patch.delayDucking, 0.08 + t * 0.42), 0.0, 1.0);
-    patch.reverbDiffusion = std::clamp(std::max(patch.reverbDiffusion, 0.36 + t * 0.52), 0.0, 1.0);
-    patch.reverbWidth = std::clamp(std::max(patch.reverbWidth, 0.18 + t * 0.64), 0.0, 1.0);
-    patch.reverbModDepth = std::clamp(std::max(patch.reverbModDepth, 0.08 + t * 0.46), 0.0, 1.0);
-    patch.reverbShimmer = std::clamp(std::max(patch.reverbShimmer, 0.02 + t * 0.36), 0.0, 1.0);
+    patch.analogColor = std::clamp(std::max(patch.analogColor, 0.24 + t * 0.24), 0.0, 1.0);
+    patch.analogWarmth = std::clamp(std::max(patch.analogWarmth, 0.20 + t * 0.28), 0.0, 1.0);
+    patch.voiceSlop = std::clamp(std::max(patch.voiceSlop, 0.10 + t * 0.20), 0.0, 1.0);
+    patch.phaseScatter = std::clamp(std::max(patch.phaseScatter, 0.10 + t * 0.24), 0.0, 1.0);
+    patch.unisonWarp = std::clamp(std::max(patch.unisonWarp, 0.06 + t * 0.26), 0.0, 1.0);
+    patch.unisonHumanize = std::clamp(std::max(patch.unisonHumanize, 0.08 + t * 0.32), 0.0, 1.0);
+    patch.fmColor = std::clamp(std::max(patch.fmColor, 0.20 + t * 0.28), 0.0, 1.0);
+    patch.fmSpread = std::clamp(std::max(patch.fmSpread, 0.04 + t * 0.18), 0.0, 1.0);
+    patch.chorusTone = std::clamp(std::max(patch.chorusTone, 0.28 + t * 0.22), 0.0, 1.0);
+    patch.chorusJitter = std::clamp(std::max(patch.chorusJitter, 0.08 + t * 0.20), 0.0, 1.0);
+    patch.chorusSaturation = std::clamp(std::max(patch.chorusSaturation, 0.06 + t * 0.24), 0.0, 1.0);
+    patch.delayDiffusion = std::clamp(std::max(patch.delayDiffusion, 0.10 + t * 0.24), 0.0, 1.0);
+    patch.delayWow = std::clamp(std::max(patch.delayWow, 0.06 + t * 0.24), 0.0, 1.0);
+    patch.delayCrossfeed = std::clamp(std::max(patch.delayCrossfeed, 0.10 + t * 0.28), 0.0, 1.0);
+    patch.reverbDecay = std::clamp(std::max(patch.reverbDecay, 0.28 + t * 0.28), 0.0, 1.0);
+    patch.reverbEarlyMix = std::clamp(std::max(patch.reverbEarlyMix, 0.08 + t * 0.20), 0.0, 1.0);
+    patch.reverbTone = std::clamp(std::max(patch.reverbTone, 0.18 + t * 0.28), 0.0, 1.0);
+    patch.reverbChorus = std::clamp(std::max(patch.reverbChorus, 0.04 + t * 0.20), 0.0, 1.0);
+    patch.reverbBloom = std::clamp(std::max(patch.reverbBloom, 0.08 + t * 0.24), 0.0, 1.0);
+    patch.consoleCrosstalk = std::clamp(std::max(patch.consoleCrosstalk, 0.02 + t * 0.10), 0.0, 1.0);
+    patch.stereoDepth = std::clamp(std::max(patch.stereoDepth, 0.08 + t * 0.42), 0.0, 1.0);
+    patch.hifiExciter = std::clamp(std::max(patch.hifiExciter, 0.02 + t * 0.08), 0.0, 1.0);
+    patch.outputTransformer = std::clamp(std::max(patch.outputTransformer, 0.015 + t * 0.10), 0.0, 1.0);
+    patch.outputSoftClip = std::clamp(std::max(patch.outputSoftClip, 0.02 + t * 0.08), 0.0, 1.0);
+    patch.outputGlue = std::clamp(std::max(patch.outputGlue, 0.04 + t * 0.10), 0.0, 1.0);
+    patch.tapeColor = std::clamp(std::max(patch.tapeColor, 0.04 + t * 0.24), 0.0, 1.0);
+    patch.airBoost = std::clamp(std::max(patch.airBoost, 0.04 + t * 0.22), 0.0, 1.0);
+    patch.lowPunch = std::clamp(std::max(patch.lowPunch, 0.08 + t * 0.24), 0.0, 1.0);
+    patch.wowFlutter = std::clamp(std::max(patch.wowFlutter, 0.02 + t * 0.18), 0.0, 1.0);
+    patch.vintageDrift = std::clamp(std::max(patch.vintageDrift, 0.10 + t * 0.28), 0.0, 1.0);
+    patch.chorusEnsemble = std::clamp(std::max(patch.chorusEnsemble, 0.08 + t * 0.18), 0.0, 1.0);
+    patch.chorusFeedback = std::clamp(std::max(patch.chorusFeedback, 0.06 + t * 0.32), 0.0, 0.88);
+    patch.chorusDelay = std::clamp(std::max(patch.chorusDelay, 0.08 + t * 0.22), 0.0, 1.0);
+    patch.chorusWidth = std::clamp(std::max(patch.chorusWidth, 0.20 + t * 0.30), 0.0, 1.0);
+    patch.delayDrive = std::clamp(std::max(patch.delayDrive, 0.04 + t * 0.26), 0.0, 1.0);
+    patch.delayModDepth = std::clamp(std::max(patch.delayModDepth, 0.06 + t * 0.24), 0.0, 1.0);
+    patch.delayStereo = std::clamp(std::max(patch.delayStereo, 0.10 + t * 0.24), 0.0, 1.0);
+    patch.delayDucking = std::clamp(std::max(patch.delayDucking, 0.04 + t * 0.22), 0.0, 1.0);
+    patch.reverbDiffusion = std::clamp(std::max(patch.reverbDiffusion, 0.22 + t * 0.28), 0.0, 1.0);
+    patch.reverbWidth = std::clamp(std::max(patch.reverbWidth, 0.10 + t * 0.38), 0.0, 1.0);
+    patch.reverbModDepth = std::clamp(std::max(patch.reverbModDepth, 0.04 + t * 0.24), 0.0, 1.0);
+    patch.reverbShimmer = std::clamp(std::max(patch.reverbShimmer, 0.02 + t * 0.10), 0.0, 1.0);
 
     if (percussive) {
-        patch.delayMix = std::clamp(std::max(patch.delayMix, 0.02 + t * 0.18), 0.0, 1.0);
-        patch.reverbMix = std::clamp(std::max(patch.reverbMix, 0.05 + t * 0.26), 0.0, 1.0);
-        patch.combMix = std::clamp(std::max(patch.combMix, 0.04 + t * 0.18), 0.0, 1.0);
-        patch.transientShape = std::clamp(std::max(patch.transientShape, 0.44 + t * 0.46), 0.0, 1.0);
+        patch.delayMix = std::clamp(std::max(patch.delayMix, 0.01 + t * 0.10), 0.0, 1.0);
+        patch.reverbMix = std::clamp(std::max(patch.reverbMix, 0.02 + t * 0.14), 0.0, 1.0);
+        patch.combMix = std::clamp(std::max(patch.combMix, 0.01 + t * 0.10), 0.0, 1.0);
+        patch.transientShape = std::clamp(std::max(patch.transientShape, 0.28 + t * 0.38), 0.0, 1.0);
     } else {
-        patch.delayMix = std::clamp(std::max(patch.delayMix, 0.08 + t * 0.34), 0.0, 1.0);
-        patch.reverbMix = std::clamp(std::max(patch.reverbMix, 0.10 + t * 0.38), 0.0, 1.0);
-        patch.combMix = std::clamp(std::max(patch.combMix, 0.04 + t * 0.24), 0.0, 1.0);
+        patch.delayMix = std::clamp(std::max(patch.delayMix, 0.05 + t * 0.22), 0.0, 1.0);
+        patch.reverbMix = std::clamp(std::max(patch.reverbMix, 0.07 + t * 0.18), 0.0, 1.0);
+        patch.combMix = std::clamp(std::max(patch.combMix, 0.03 + t * 0.16), 0.0, 1.0);
         patch.chorusEnabled = true;
-        patch.chorusMix = std::clamp(std::max(patch.chorusMix, 0.10 + t * 0.36), 0.0, 1.0);
+        patch.chorusMix = std::clamp(std::max(patch.chorusMix, 0.08 + t * 0.18), 0.0, 1.0);
     }
+
+    patch.gain = std::clamp(std::max(patch.gain, 0.06), 0.06, 0.80);
+    patch.drive = std::clamp(patch.drive, 0.0, 0.48);
+    patch.wavefold = std::clamp(patch.wavefold, 0.0, 0.30);
+    patch.filterDrive = std::clamp(patch.filterDrive, 0.0, 0.72);
+    patch.filterEnvelope.decay = std::clamp(patch.filterEnvelope.decay, 0.0005, 0.45);
+    patch.ampEnvelope.decay = std::clamp(patch.ampEnvelope.decay, 0.0005, 0.70);
+    patch.ampEnvelope.release = std::clamp(patch.ampEnvelope.release, 0.005, 0.70);
+    patch.chorusSaturation = std::clamp(patch.chorusSaturation, 0.0, 0.40);
+    patch.delayModDepth = std::clamp(patch.delayModDepth, 0.0, 0.36);
+    patch.reverbModDepth = std::clamp(patch.reverbModDepth, 0.0, 0.28);
+    patch.reverbChorus = std::clamp(patch.reverbChorus, 0.0, 0.28);
+    patch.reverbShimmer = std::clamp(patch.reverbShimmer, 0.0, 0.10);
+    patch.chorusFeedback = std::clamp(patch.chorusFeedback, 0.0, 0.72);
+    patch.delayDrive = std::clamp(patch.delayDrive, 0.0, 0.26);
+    patch.delayFeedback = std::clamp(patch.delayFeedback, 0.0, 0.66);
+    patch.combFeedback = std::clamp(patch.combFeedback, 0.0, 0.58);
+    patch.reverbDecay = std::clamp(patch.reverbDecay, 0.0, 0.80);
+    patch.reverbDiffusion = std::clamp(patch.reverbDiffusion, 0.0, 0.80);
+    patch.delayDiffusion = std::clamp(patch.delayDiffusion, 0.0, 0.58);
+    patch.outputTransformer = std::clamp(patch.outputTransformer, 0.0, 0.20);
+    patch.outputSoftClip = std::clamp(patch.outputSoftClip, 0.0, 0.14);
+    patch.outputGlue = std::clamp(patch.outputGlue, 0.0, 0.24);
+    patch.hifiExciter = std::clamp(patch.hifiExciter, 0.0, 0.12);
+    patch.airBoost = std::clamp(patch.airBoost, 0.0, 0.24);
+    patch.toneTilt = std::clamp(patch.toneTilt, -0.40, 0.40);
+    patch.lowPunch = std::clamp(patch.lowPunch, 0.0, 0.80);
+    patch.highPass = std::clamp(patch.highPass, 0.0, 0.35);
+    patch.click = std::clamp(patch.click, 0.0, 0.05);
+    patch.transientNoise = std::min(patch.transientNoise, 0.10);
+    patch.stereoDepth = std::clamp(patch.stereoDepth, 0.0, 0.85);
+    if (!patch.bitCrushEnabled) {
+        patch.bitCrush = 0.0;
+        patch.sampleRateReduction = 0.0;
+    } else {
+        patch.bitCrush = std::clamp(patch.bitCrush, 0.0, 0.16);
+        patch.sampleRateReduction = std::clamp(patch.sampleRateReduction, 0.0, 0.08);
+        if (patch.bitCrush <= 0.01 && patch.sampleRateReduction <= 0.01) {
+            patch.bitCrushEnabled = false;
+            patch.bitCrush = 0.0;
+            patch.sampleRateReduction = 0.0;
+        }
+    }
+
+    if (percussive) {
+        patch.outputTransformer = std::min(patch.outputTransformer, 0.22);
+        patch.delayFeedback = std::min(patch.delayFeedback, 0.58);
+        patch.combFeedback = std::min(patch.combFeedback, 0.52);
+        patch.click = std::min(patch.click, 0.03);
+        patch.transientNoise = std::min(patch.transientNoise, 0.06);
+        patch.transientBurstCount = std::clamp(patch.transientBurstCount, 1, 4);
+        patch.transientBurstDecay = std::clamp(patch.transientBurstDecay, 0.16, 0.40);
+        patch.transientBurstSpacing = std::max(patch.transientBurstSpacing, 0.0016);
+        patch.filterDrive = std::min(patch.filterDrive, 0.52);
+        patch.delayMix = std::clamp(patch.delayMix, 0.0, 0.24);
+        patch.reverbMix = std::clamp(patch.reverbMix, 0.0, 0.24);
+        patch.sampleRateReduction = std::min(patch.sampleRateReduction, 0.008);
+        patch.bitCrush = std::min(patch.bitCrush, 0.018);
+        patch.ampEnvelope.attack = std::clamp(patch.ampEnvelope.attack, 0.0002, 0.006);
+        patch.ampEnvelope.decay = std::clamp(patch.ampEnvelope.decay, 0.001, 0.20);
+        patch.transientBurstSpacing = std::clamp(patch.transientBurstSpacing, 0.0016, 0.0060);
+        patch.noiseTone = std::min(patch.noiseTone, 0.60);
+        patch.pitchEnvelopeDecay = std::clamp(patch.pitchEnvelopeDecay, 0.012, 0.22);
+    }
+
+    if (isBassPatch(patch)) {
+        patch.cutoff = 0.35;
+        patch.resonance = 0.60;
+    }
+
+    if (!percussive && isMelodicPatch(patch)) {
+        patch.chorusDepth = std::max(patch.chorusDepth, 0.60);
+    }
+}
+
+bool looksLikePercussivePatch(const std::string& name) {
+    const std::string lowerName = lowerCopy(name);
+    constexpr const char* kPercussiveTokens[] = {
+        "kick",
+        "snare",
+        "hat",
+        "hihat",
+        "clap",
+        "tom",
+        "ride",
+        "rim",
+        "cymbal",
+        "shaker",
+        "percussion",
+        "perc",
+        "drum",
+        "kickup",
+        "snr",
+        "808",
+        "909",
+        "closed",
+        "open",
+        "metal",
+        "metallic",
+        "metal_hat",
+        "noisehit",
+        "ride",
+        "clap",
+        "ridecymbal",
+        "tom-tom",
+        "crash"};
+    return std::any_of(
+        std::begin(kPercussiveTokens),
+        std::end(kPercussiveTokens),
+        [&](const char* token) { return lowerName.find(token) != std::string::npos; });
+}
+
+bool looksLikeBassPatch(const std::string& name) {
+    const std::string lowerName = lowerCopy(name);
+    constexpr const char* kBassTokens[] = {
+        "bass",
+        "sub",
+        "ebm",
+        "ebmdist",
+        "ebm_dist",
+        "drum_bass",
+        "low",
+        "drone",
+        "reese",
+        "fm_bass",
+        "fm bass",
+        "dist",
+        "monolith",
+        "pressure",
+        "industrial"};
+    return std::any_of(std::begin(kBassTokens), std::end(kBassTokens), [&](const char* token) {
+        return lowerName.find(token) != std::string::npos;
+    });
+}
+
+bool looksLikeLeadPatch(const std::string& name) {
+    const std::string lowerName = lowerCopy(name);
+    constexpr const char* kLeadTokens[] = {
+        "lead",
+        "arp",
+        "acid",
+        "scream",
+        "saw",
+        "stab",
+        "choir",
+        "bright",
+        "twin",
+        "glass",
+        "melodic",
+        "bell",
+        "pad"};
+    return std::any_of(std::begin(kLeadTokens), std::end(kLeadTokens), [&](const char* token) {
+        return lowerName.find(token) != std::string::npos;
+    });
+}
+
+void applyGenreBalance(SynthPatch& patch) {
+    const bool isPercussive = looksLikePercussivePatch(patch.name);
+    const bool isBass = looksLikeBassPatch(patch.name);
+    const bool isLead = looksLikeLeadPatch(patch.name);
+    if (isPercussive) {
+        patch.transientShape = std::clamp(patch.transientShape + 0.12, 0.0, 1.0);
+        patch.delayMix = std::clamp(patch.delayMix * 0.78, 0.0, 0.22);
+        patch.reverbMix = std::clamp(patch.reverbMix * 0.86, 0.0, 0.24);
+        patch.reverbWidth = std::clamp(patch.reverbWidth * 0.92, 0.0, 0.72);
+        patch.outputSoftClip = std::clamp(patch.outputSoftClip + 0.01, 0.0, 0.14);
+        patch.click = std::clamp(patch.click + 0.01, 0.0, 0.10);
+        patch.transientNoise = std::clamp(patch.transientNoise + 0.02, 0.0, 0.18);
+    } else if (isBass) {
+        patch.lowPunch = std::clamp(patch.lowPunch + 0.12, 0.0, 0.98);
+        patch.filterEnvelopeAmount = std::clamp(patch.filterEnvelopeAmount + 0.07, 0.0, 1.0);
+        patch.filterDrive = std::clamp(patch.filterDrive + 0.08, 0.0, 0.90);
+        patch.cutoff = std::clamp(patch.cutoff, 0.0, 0.82);
+        patch.subEnabled = true;
+        patch.subOscillator = std::clamp(patch.subOscillator + 0.06, 0.0, 0.55);
+        patch.outputGlue = std::clamp(patch.outputGlue + 0.03, 0.0, 0.27);
+        patch.outputTransformer = std::clamp(patch.outputTransformer + 0.03, 0.0, 0.24);
+    } else if (isLead) {
+        patch.chorusWidth = std::clamp(patch.chorusWidth * 1.08, 0.0, 0.95);
+        patch.stereoSpread = std::clamp(patch.stereoSpread + 0.06, 0.0, 0.9);
+        patch.hifiExciter = std::clamp(patch.hifiExciter + 0.02, 0.0, 0.14);
+        patch.airBoost = std::clamp(patch.airBoost + 0.02, 0.0, 0.14);
+        patch.filterKeytrack = std::clamp(patch.filterKeytrack + 0.07, 0.0, 1.0);
+        patch.ampEnvelope.attack = std::min(patch.ampEnvelope.attack, 0.09);
+        patch.ampEnvelope.release = std::clamp(patch.ampEnvelope.release + 0.02, 0.01, 0.9);
+    } else {
+        patch.reverbWidth = std::clamp(patch.reverbWidth + 0.05, 0.0, 0.9);
+        patch.tapeColor = std::clamp(patch.tapeColor + 0.04, 0.0, 0.45);
+        patch.delayStereo = std::clamp(patch.delayStereo + 0.04, 0.0, 0.9);
+    }
+    patch.delayDucking = std::clamp(patch.delayDucking, 0.0, 0.32);
+    patch.reverbDiffusion = std::clamp(patch.reverbDiffusion, 0.0, 0.88);
 }
 
 Pattern buildOpeningPattern(
@@ -506,7 +720,7 @@ Song makeDemoSong() {
     bass.reverbDecay = 0.58;
     bass.reverbEarlyMix = 0.22;
     bass.consoleCrosstalk = 0.09;
-    bass.outputGlue = 0.48;
+    bass.outputGlue = 0.28;
     bass.bitCrushEnabled = true;
     bass.bitCrush = 0.02;
     bass.combMix = 0.06;
@@ -566,7 +780,7 @@ Song makeDemoSong() {
     lead.reverbDecay = 0.72;
     lead.reverbEarlyMix = 0.31;
     lead.consoleCrosstalk = 0.05;
-    lead.outputGlue = 0.34;
+    lead.outputGlue = 0.18;
     lead.gain = 0.42;
     lead.ampEnvelope.attack = 0.004;
     lead.ampEnvelope.decay = 0.11;
@@ -593,7 +807,7 @@ Song makeDemoSong() {
     pad.chorusEnabled = true;
     pad.chorusMix = 0.32;
     pad.chorusRate = 0.24;
-    pad.chorusDepth = 0.58;
+    pad.chorusDepth = 0.42;
     pad.cutoff = 0.5;
     pad.resonance = 0.14;
     pad.filterEnvelopeAmount = 0.18;
@@ -613,7 +827,7 @@ Song makeDemoSong() {
     pad.reverbDecay = 0.86;
     pad.reverbEarlyMix = 0.37;
     pad.consoleCrosstalk = 0.08;
-    pad.outputGlue = 0.41;
+    pad.outputGlue = 0.26;
     pad.gain = 0.38;
     pad.ampEnvelope.attack = 0.08;
     pad.ampEnvelope.decay = 0.34;
@@ -634,7 +848,7 @@ Song makeDemoSong() {
     kick.subOscillator = 0.34;
     kick.noise = 0.03;
     kick.noiseTone = 0.36;
-    kick.click = 0.52;
+    kick.click = 0.2;
     kick.transientShape = 0.62;
     kick.transientNoise = 0.12;
     kick.transientPitchSemitones = 14.0;
@@ -654,7 +868,7 @@ Song makeDemoSong() {
     kick.fmRatio = 1.5;
     kick.fmFeedback = 0.26;
     kick.fmAlgorithm = 1;
-    kick.drive = 0.52;
+    kick.drive = 0.46;
     kick.wavefold = 0.08;
     kick.analogColor = 0.62;
     kick.toneTilt = -0.36;
@@ -666,8 +880,8 @@ Song makeDemoSong() {
     kick.reverbDecay = 0.36;
     kick.reverbEarlyMix = 0.18;
     kick.consoleCrosstalk = 0.07;
-    kick.outputGlue = 0.55;
-    kick.gain = 0.98;
+    kick.outputGlue = 0.28;
+    kick.gain = 0.7;
     kick.ampEnvelope.attack = 0.001;
     kick.ampEnvelope.decay = 0.12;
     kick.ampEnvelope.sustain = 0.0;
@@ -685,26 +899,26 @@ Song makeDemoSong() {
     snare.fmAlgorithm = 3;
     snare.noise = 0.82;
     snare.noiseTone = 0.84;
-    snare.click = 0.3;
+    snare.click = 0.16;
     snare.transientShape = 0.72;
-    snare.transientNoise = 0.66;
+    snare.transientNoise = 0.40;
     snare.transientPitchSemitones = 22.0;
     snare.transientPitchDecay = 0.009;
-    snare.transientBurstCount = 3;
-    snare.transientBurstSpacing = 0.0027;
-    snare.transientBurstDecay = 0.56;
+    snare.transientBurstCount = 2;
+    snare.transientBurstSpacing = 0.0030;
+    snare.transientBurstDecay = 0.52;
     snare.transientTone = 0.86;
     snare.transientDecay = 0.03;
     snare.pitchEnvelopeSemitones = 9.0;
     snare.pitchEnvelopeDecay = 0.035;
     snare.cutoff = 0.8;
     snare.filterMode = 2;
-    snare.filterDrive = 0.66;
+    snare.filterDrive = 0.52;
     snare.filterKeytrack = 0.28;
     snare.highPass = 0.42;
     snare.ringEnabled = true;
     snare.ringMod = 0.22;
-    snare.drive = 0.44;
+    snare.drive = 0.38;
     snare.wavefold = 0.2;
     snare.analogColor = 0.58;
     snare.toneTilt = 0.22;
@@ -716,10 +930,10 @@ Song makeDemoSong() {
     snare.reverbDecay = 0.64;
     snare.reverbEarlyMix = 0.42;
     snare.consoleCrosstalk = 0.12;
-    snare.outputGlue = 0.43;
+    snare.outputGlue = 0.24;
     snare.bitCrushEnabled = true;
-    snare.bitCrush = 0.08;
-    snare.gain = 0.64;
+    snare.bitCrush = 0.04;
+    snare.gain = 0.56;
     snare.ampEnvelope.attack = 0.001;
     snare.ampEnvelope.decay = 0.082;
     snare.ampEnvelope.sustain = 0.0;
@@ -742,16 +956,16 @@ Song makeDemoSong() {
     hat.chorusDepth = 0.18;
     hat.noise = 0.92;
     hat.noiseTone = 0.95;
-    hat.click = 0.18;
+    hat.click = 0.14;
     hat.transientShape = 0.62;
-    hat.transientNoise = 0.72;
+    hat.transientNoise = 0.44;
     hat.transientPitchSemitones = 24.0;
     hat.transientPitchDecay = 0.007;
-    hat.transientBurstCount = 4;
+    hat.transientBurstCount = 3;
     hat.transientBurstSpacing = 0.0025;
-    hat.transientBurstDecay = 0.5;
-    hat.transientTone = 0.98;
-    hat.transientDecay = 0.008;
+    hat.transientBurstDecay = 0.48;
+    hat.transientTone = 0.72;
+    hat.transientDecay = 0.012;
     hat.cutoff = 0.9;
     hat.filterMode = 2;
     hat.filterDrive = 0.48;
@@ -762,8 +976,8 @@ Song makeDemoSong() {
     hat.hardSyncEnabled = true;
     hat.hardSync = 0.44;
     hat.bitCrushEnabled = true;
-    hat.bitCrush = 0.22;
-    hat.sampleRateReduction = 0.18;
+    hat.bitCrush = 0.08;
+    hat.sampleRateReduction = 0.04;
     hat.analogColor = 0.52;
     hat.toneTilt = 0.44;
     hat.analogWarmth = 0.37;
@@ -774,7 +988,7 @@ Song makeDemoSong() {
     hat.reverbDecay = 0.52;
     hat.reverbEarlyMix = 0.36;
     hat.consoleCrosstalk = 0.16;
-    hat.outputGlue = 0.32;
+    hat.outputGlue = 0.18;
     hat.gain = 0.32;
     hat.ampEnvelope.attack = 0.001;
     hat.ampEnvelope.decay = 0.035;
@@ -869,14 +1083,14 @@ Song makeDemoSong() {
     clap.oscillatorCMix = 0.48;
     clap.cutoff = 0.88;
     clap.highPass = 0.6;
-    clap.click = 0.38;
+    clap.click = 0.26;
     clap.transientShape = 0.74;
-    clap.transientNoise = 0.7;
+    clap.transientNoise = 0.44;
     clap.transientPitchSemitones = 14.0;
     clap.transientPitchDecay = 0.01;
-    clap.transientBurstCount = 5;
+    clap.transientBurstCount = 3;
     clap.transientBurstSpacing = 0.0042;
-    clap.transientBurstDecay = 0.64;
+    clap.transientBurstDecay = 0.58;
     clap.transientTone = 0.9;
     clap.transientDecay = 0.015;
     clap.filterMode = 2;
@@ -926,11 +1140,11 @@ Song makeDemoSong() {
     ride.transientShape = 0.48;
     ride.transientPitchSemitones = 8.0;
     ride.transientPitchDecay = 0.007;
-    ride.transientBurstCount = 3;
+    ride.transientBurstCount = 2;
     ride.transientBurstSpacing = 0.0032;
-    ride.transientBurstDecay = 0.62;
-    ride.transientTone = 0.99;
-    ride.sampleRateReduction = 0.22;
+    ride.transientBurstDecay = 0.56;
+    ride.transientTone = 0.84;
+    ride.sampleRateReduction = 0.08;
     ride.gain = 0.2;
     ride.ampEnvelope.decay = 0.07;
     ride.ampEnvelope.release = 0.06;
@@ -1121,11 +1335,11 @@ Song makeDemoSong() {
     rim.drive = 0.4;
     rim.wavefold = 0.22;
     rim.bitCrushEnabled = true;
-    rim.bitCrush = 0.18;
-    rim.sampleRateReduction = 0.12;
-    rim.click = 0.48;
+    rim.bitCrush = 0.08;
+    rim.sampleRateReduction = 0.06;
+    rim.click = 0.22;
     rim.transientShape = 0.84;
-    rim.transientNoise = 0.44;
+    rim.transientNoise = 0.30;
     rim.transientPitchSemitones = 22.0;
     rim.transientPitchDecay = 0.008;
     rim.transientBurstCount = 2;
@@ -1153,20 +1367,20 @@ Song makeDemoSong() {
     indKick.subOscillator = 0.55;
     indKick.noise = 0.08;
     indKick.noiseTone = 0.28;
-    indKick.click = 0.78;
+    indKick.click = 0.22;
     indKick.transientShape = 0.88;
     indKick.transientNoise = 0.28;
     indKick.transientPitchSemitones = 18.0;
     indKick.transientPitchDecay = 0.008;
-    indKick.transientBurstCount = 3;
+    indKick.transientBurstCount = 2;
     indKick.transientBurstSpacing = 0.0022;
-    indKick.transientBurstDecay = 0.68;
+    indKick.transientBurstDecay = 0.58;
     indKick.transientTone = 0.42;
     indKick.transientDecay = 0.018;
     indKick.cutoff = 0.48;
     indKick.resonance = 0.34;
     indKick.filterMode = 1;
-    indKick.filterDrive = 1.0;
+    indKick.filterDrive = 0.58;
     indKick.filterKeytrack = 0.12;
     indKick.filterEnvelopeAmount = 0.38;
     indKick.fmEnabled = true;
@@ -1174,7 +1388,7 @@ Song makeDemoSong() {
     indKick.fmRatio = 0.5;
     indKick.fmFeedback = 0.42;
     indKick.fmAlgorithm = 1;
-    indKick.drive = 0.72;
+    indKick.drive = 0.52;
     indKick.wavefold = 0.14;
     indKick.bitCrushEnabled = true;
     indKick.bitCrush = 0.04;
@@ -1185,7 +1399,7 @@ Song makeDemoSong() {
     indKick.analogColor = 0.74;
     indKick.toneTilt = -0.52;
     indKick.lowPunch = 0.88;
-    indKick.gain = 1.0;
+    indKick.gain = 0.82;
     indKick.ampEnvelope.attack = 0.0005;
     indKick.ampEnvelope.decay = 0.14;
     indKick.ampEnvelope.sustain = 0.0;
@@ -1207,7 +1421,7 @@ Song makeDemoSong() {
     tightKick.subOscillator = 0.42;
     tightKick.noise = 0.04;
     tightKick.noiseTone = 0.22;
-    tightKick.click = 0.62;
+    tightKick.click = 0.22;
     tightKick.transientShape = 0.72;
     tightKick.transientNoise = 0.16;
     tightKick.transientPitchSemitones = 12.0;
@@ -1253,12 +1467,12 @@ Song makeDemoSong() {
     gatedSnare.fmAlgorithm = 2;
     gatedSnare.noise = 0.88;
     gatedSnare.noiseTone = 0.76;
-    gatedSnare.click = 0.42;
+    gatedSnare.click = 0.2;
     gatedSnare.transientShape = 0.68;
-    gatedSnare.transientNoise = 0.78;
+    gatedSnare.transientNoise = 0.40;
     gatedSnare.transientPitchSemitones = 16.0;
     gatedSnare.transientPitchDecay = 0.008;
-    gatedSnare.transientBurstCount = 4;
+    gatedSnare.transientBurstCount = 3;
     gatedSnare.transientBurstSpacing = 0.0024;
     gatedSnare.transientBurstDecay = 0.58;
     gatedSnare.transientTone = 0.82;
@@ -1268,7 +1482,7 @@ Song makeDemoSong() {
     gatedSnare.cutoff = 0.72;
     gatedSnare.resonance = 0.28;
     gatedSnare.filterMode = 0;
-    gatedSnare.filterDrive = 0.58;
+    gatedSnare.filterDrive = 0.46;
     gatedSnare.filterKeytrack = 0.22;
     gatedSnare.filterEnvelopeAmount = 0.32;
     gatedSnare.highPass = 0.32;
@@ -1314,36 +1528,36 @@ Song makeDemoSong() {
     indSnare.fmAlgorithm = 3;
     indSnare.noise = 0.95;
     indSnare.noiseTone = 0.92;
-    indSnare.click = 0.55;
+    indSnare.click = 0.22;
     indSnare.transientShape = 0.92;
-    indSnare.transientNoise = 0.88;
+    indSnare.transientNoise = 0.44;
     indSnare.transientPitchSemitones = 28.0;
     indSnare.transientPitchDecay = 0.006;
-    indSnare.transientBurstCount = 5;
+    indSnare.transientBurstCount = 3;
     indSnare.transientBurstSpacing = 0.0018;
-    indSnare.transientBurstDecay = 0.48;
+    indSnare.transientBurstDecay = 0.54;
     indSnare.transientTone = 0.96;
     indSnare.transientDecay = 0.028;
     indSnare.cutoff = 0.86;
     indSnare.resonance = 0.42;
     indSnare.filterMode = 2;
-    indSnare.filterDrive = 0.88;
+    indSnare.filterDrive = 0.56;
     indSnare.filterKeytrack = 0.15;
     indSnare.filterEnvelopeAmount = 0.45;
     indSnare.highPass = 0.48;
     indSnare.ringEnabled = true;
     indSnare.ringMod = 0.42;
-    indSnare.drive = 0.68;
+    indSnare.drive = 0.46;
     indSnare.wavefold = 0.28;
     indSnare.bitCrushEnabled = true;
-    indSnare.bitCrush = 0.12;
-    indSnare.sampleRateReduction = 0.08;
+    indSnare.bitCrush = 0.06;
+    indSnare.sampleRateReduction = 0.05;
     indSnare.combMix = 0.14;
     indSnare.combTime = 0.032;
     indSnare.combFeedback = 0.52;
     indSnare.analogColor = 0.78;
     indSnare.toneTilt = 0.42;
-    indSnare.gain = 0.72;
+    indSnare.gain = 0.62;
     indSnare.ampEnvelope.attack = 0.0005;
     indSnare.ampEnvelope.decay = 0.1;
     indSnare.ampEnvelope.sustain = 0.0;
@@ -1368,29 +1582,29 @@ Song makeDemoSong() {
     closedHat.fmAlgorithm = 3;
     closedHat.noise = 0.88;
     closedHat.noiseTone = 0.96;
-    closedHat.click = 0.28;
+    closedHat.click = 0.12;
     closedHat.transientShape = 0.58;
-    closedHat.transientNoise = 0.62;
+    closedHat.transientNoise = 0.4;
     closedHat.transientPitchSemitones = 18.0;
     closedHat.transientPitchDecay = 0.005;
-    closedHat.transientBurstCount = 3;
+    closedHat.transientBurstCount = 2;
     closedHat.transientBurstSpacing = 0.0016;
-    closedHat.transientBurstDecay = 0.55;
+    closedHat.transientBurstDecay = 0.5;
     closedHat.transientTone = 0.98;
     closedHat.transientDecay = 0.006;
     closedHat.cutoff = 0.94;
     closedHat.resonance = 0.38;
     closedHat.filterMode = 2;
-    closedHat.filterDrive = 0.52;
+    closedHat.filterDrive = 0.44;
     closedHat.filterKeytrack = 0.1;
-    closedHat.highPass = 0.72;
+    closedHat.highPass = 0.58;
     closedHat.ringEnabled = true;
     closedHat.ringMod = 0.48;
     closedHat.hardSyncEnabled = true;
     closedHat.hardSync = 0.38;
     closedHat.bitCrushEnabled = true;
-    closedHat.bitCrush = 0.18;
-    closedHat.sampleRateReduction = 0.14;
+    closedHat.bitCrush = 0.07;
+    closedHat.sampleRateReduction = 0.05;
     closedHat.analogColor = 0.48;
     closedHat.toneTilt = 0.52;
     closedHat.gain = 0.26;
@@ -1417,26 +1631,26 @@ Song makeDemoSong() {
     openHat.fmAlgorithm = 3;
     openHat.noise = 0.92;
     openHat.noiseTone = 0.94;
-    openHat.click = 0.22;
+    openHat.click = 0.16;
     openHat.transientShape = 0.48;
-    openHat.transientNoise = 0.72;
+    openHat.transientNoise = 0.44;
     openHat.transientPitchSemitones = 14.0;
     openHat.transientPitchDecay = 0.006;
-    openHat.transientBurstCount = 4;
+    openHat.transientBurstCount = 3;
     openHat.transientBurstSpacing = 0.002;
-    openHat.transientBurstDecay = 0.52;
+    openHat.transientBurstDecay = 0.5;
     openHat.transientTone = 0.96;
     openHat.transientDecay = 0.012;
     openHat.cutoff = 0.88;
     openHat.resonance = 0.32;
     openHat.filterMode = 2;
     openHat.filterDrive = 0.44;
-    openHat.highPass = 0.68;
+    openHat.highPass = 0.52;
     openHat.ringEnabled = true;
     openHat.ringMod = 0.38;
     openHat.bitCrushEnabled = true;
-    openHat.bitCrush = 0.12;
-    openHat.sampleRateReduction = 0.1;
+    openHat.bitCrush = 0.06;
+    openHat.sampleRateReduction = 0.06;
     openHat.combMix = 0.08;
     openHat.combTime = 0.018;
     openHat.combFeedback = 0.35;
@@ -1467,24 +1681,24 @@ Song makeDemoSong() {
     crash.noiseTone = 0.99;
     crash.click = 0.15;
     crash.transientShape = 0.55;
-    crash.transientNoise = 0.82;
+    crash.transientNoise = 0.46;
     crash.transientPitchSemitones = 10.0;
     crash.transientPitchDecay = 0.005;
-    crash.transientBurstCount = 6;
+    crash.transientBurstCount = 3;
     crash.transientBurstSpacing = 0.0014;
-    crash.transientBurstDecay = 0.45;
+    crash.transientBurstDecay = 0.58;
     crash.transientTone = 0.99;
     crash.transientDecay = 0.035;
     crash.cutoff = 0.96;
     crash.resonance = 0.28;
     crash.filterMode = 2;
     crash.filterDrive = 0.42;
-    crash.highPass = 0.82;
+    crash.highPass = 0.62;
     crash.ringEnabled = true;
     crash.ringMod = 0.28;
     crash.bitCrushEnabled = true;
-    crash.bitCrush = 0.08;
-    crash.sampleRateReduction = 0.12;
+    crash.bitCrush = 0.06;
+    crash.sampleRateReduction = 0.05;
     crash.combMix = 0.12;
     crash.combTime = 0.022;
     crash.combFeedback = 0.48;
@@ -1516,14 +1730,14 @@ Song makeDemoSong() {
     indClap.fmAlgorithm = 3;
     indClap.noise = 0.9;
     indClap.noiseTone = 0.88;
-    indClap.click = 0.48;
+    indClap.click = 0.2;
     indClap.transientShape = 0.82;
-    indClap.transientNoise = 0.75;
+    indClap.transientNoise = 0.42;
     indClap.transientPitchSemitones = 12.0;
     indClap.transientPitchDecay = 0.008;
-    indClap.transientBurstCount = 6;
+    indClap.transientBurstCount = 3;
     indClap.transientBurstSpacing = 0.0036;
-    indClap.transientBurstDecay = 0.58;
+    indClap.transientBurstDecay = 0.54;
     indClap.transientTone = 0.92;
     indClap.transientDecay = 0.018;
     indClap.cutoff = 0.82;
@@ -1534,7 +1748,7 @@ Song makeDemoSong() {
     indClap.drive = 0.48;
     indClap.wavefold = 0.16;
     indClap.bitCrushEnabled = true;
-    indClap.bitCrush = 0.06;
+    indClap.bitCrush = 0.04;
     indClap.combMix = 0.18;
     indClap.combTime = 0.028;
     indClap.combFeedback = 0.42;
@@ -1563,12 +1777,12 @@ Song makeDemoSong() {
     shaker.fmAlgorithm = 3;
     shaker.noise = 0.78;
     shaker.noiseTone = 0.88;
-    shaker.click = 0.12;
+    shaker.click = 0.09;
     shaker.transientShape = 0.42;
-    shaker.transientNoise = 0.55;
+    shaker.transientNoise = 0.32;
     shaker.transientPitchSemitones = 8.0;
     shaker.transientPitchDecay = 0.004;
-    shaker.transientBurstCount = 5;
+    shaker.transientBurstCount = 3;
     shaker.transientBurstSpacing = 0.0012;
     shaker.transientBurstDecay = 0.62;
     shaker.transientTone = 0.92;
@@ -1581,7 +1795,7 @@ Song makeDemoSong() {
     shaker.ringEnabled = true;
     shaker.ringMod = 0.22;
     shaker.bitCrushEnabled = true;
-    shaker.bitCrush = 0.1;
+    shaker.bitCrush = 0.05;
     shaker.analogColor = 0.44;
     shaker.toneTilt = 0.48;
     shaker.gain = 0.22;
@@ -1602,7 +1816,7 @@ Song makeDemoSong() {
     floorTom.subOscillator = 0.38;
     floorTom.noise = 0.12;
     floorTom.noiseTone = 0.42;
-    floorTom.click = 0.22;
+    floorTom.click = 0.16;
     floorTom.transientShape = 0.38;
     floorTom.transientNoise = 0.22;
     floorTom.transientPitchSemitones = 8.0;
@@ -1615,7 +1829,7 @@ Song makeDemoSong() {
     floorTom.cutoff = 0.42;
     floorTom.resonance = 0.22;
     floorTom.filterMode = 1;
-    floorTom.filterDrive = 0.48;
+    floorTom.filterDrive = 0.42;
     floorTom.filterKeytrack = 0.28;
     floorTom.filterEnvelopeAmount = 0.18;
     floorTom.drive = 0.28;
@@ -1643,7 +1857,7 @@ Song makeDemoSong() {
     highTom.subOscillator = 0.18;
     highTom.noise = 0.18;
     highTom.noiseTone = 0.58;
-    highTom.click = 0.28;
+    highTom.click = 0.2;
     highTom.transientShape = 0.48;
     highTom.transientNoise = 0.32;
     highTom.transientPitchSemitones = 12.0;
@@ -1656,7 +1870,7 @@ Song makeDemoSong() {
     highTom.cutoff = 0.58;
     highTom.resonance = 0.26;
     highTom.filterMode = 0;
-    highTom.filterDrive = 0.52;
+    highTom.filterDrive = 0.44;
     highTom.filterKeytrack = 0.32;
     highTom.filterEnvelopeAmount = 0.22;
     highTom.drive = 0.22;
@@ -1686,29 +1900,29 @@ Song makeDemoSong() {
     noiseHit.fmAlgorithm = 3;
     noiseHit.noise = 1.0;
     noiseHit.noiseTone = 0.85;
-    noiseHit.click = 0.35;
+    noiseHit.click = 0.24;
     noiseHit.transientShape = 0.95;
-    noiseHit.transientNoise = 0.95;
+    noiseHit.transientNoise = 0.38;
     noiseHit.transientPitchSemitones = 32.0;
     noiseHit.transientPitchDecay = 0.004;
-    noiseHit.transientBurstCount = 7;
+    noiseHit.transientBurstCount = 3;
     noiseHit.transientBurstSpacing = 0.001;
-    noiseHit.transientBurstDecay = 0.38;
+    noiseHit.transientBurstDecay = 0.52;
     noiseHit.transientTone = 0.98;
     noiseHit.transientDecay = 0.04;
     noiseHit.cutoff = 0.78;
     noiseHit.resonance = 0.48;
     noiseHit.filterMode = 2;
-    noiseHit.filterDrive = 1.0;
+    noiseHit.filterDrive = 0.58;
     noiseHit.highPass = 0.35;
-    noiseHit.drive = 0.82;
+    noiseHit.drive = 0.46;
     noiseHit.wavefold = 0.32;
     noiseHit.bitCrushEnabled = true;
-    noiseHit.bitCrush = 0.18;
-    noiseHit.sampleRateReduction = 0.16;
+    noiseHit.bitCrush = 0.06;
+    noiseHit.sampleRateReduction = 0.05;
     noiseHit.combMix = 0.22;
     noiseHit.combTime = 0.015;
-    noiseHit.combFeedback = 0.62;
+    noiseHit.combFeedback = 0.52;
     noiseHit.analogColor = 0.82;
     noiseHit.toneTilt = 0.55;
     noiseHit.gain = 0.58;
@@ -1772,13 +1986,13 @@ Song makeDemoSong() {
     ebmDistBass.cutoff = 0.22;
     ebmDistBass.resonance = 0.38;
     ebmDistBass.filterMode = 1;
-    ebmDistBass.filterDrive = 0.95;
+    ebmDistBass.filterDrive = 0.86;
     ebmDistBass.filterKeytrack = 0.48;
     ebmDistBass.filterEnvelopeAmount = 0.55;
     ebmDistBass.lfoFilterDepth = 0.08;
     ebmDistBass.hardSyncEnabled = true;
     ebmDistBass.hardSync = 0.18;
-    ebmDistBass.drive = 0.72;
+    ebmDistBass.drive = 0.62;
     ebmDistBass.wavefold = 0.22;
     ebmDistBass.bitCrushEnabled = true;
     ebmDistBass.bitCrush = 0.04;
@@ -1828,7 +2042,7 @@ Song makeDemoSong() {
     darkBass.chorusEnabled = true;
     darkBass.chorusMix = 0.14;
     darkBass.chorusRate = 0.28;
-    darkBass.chorusDepth = 0.42;
+    darkBass.chorusDepth = 0.34;
     darkBass.drive = 0.32;
     darkBass.wavefold = 0.1;
     darkBass.analogColor = 0.68;
@@ -1863,14 +2077,14 @@ Song makeDemoSong() {
     fmBass.cutoff = 0.26;
     fmBass.resonance = 0.32;
     fmBass.filterMode = 0;
-    fmBass.filterDrive = 0.72;
+    fmBass.filterDrive = 0.62;
     fmBass.filterKeytrack = 0.38;
     fmBass.filterEnvelopeAmount = 0.48;
     fmBass.lfoFilterDepth = 0.06;
-    fmBass.drive = 0.48;
+    fmBass.drive = 0.38;
     fmBass.wavefold = 0.16;
     fmBass.bitCrushEnabled = true;
-    fmBass.bitCrush = 0.03;
+    fmBass.bitCrush = 0.02;
     fmBass.combMix = 0.08;
     fmBass.combTime = 0.04;
     fmBass.combFeedback = 0.28;
@@ -1910,14 +2124,14 @@ Song makeDemoSong() {
     reeseDark.cutoff = 0.18;
     reeseDark.resonance = 0.35;
     reeseDark.filterMode = 1;
-    reeseDark.filterDrive = 0.78;
+    reeseDark.filterDrive = 0.68;
     reeseDark.filterKeytrack = 0.42;
     reeseDark.filterEnvelopeAmount = 0.22;
     reeseDark.lfoFilterDepth = 0.22;
     reeseDark.lfoRate = 4.5;
     reeseDark.hardSyncEnabled = true;
     reeseDark.hardSync = 0.12;
-    reeseDark.drive = 0.62;
+    reeseDark.drive = 0.54;
     reeseDark.wavefold = 0.18;
     reeseDark.bitCrushEnabled = true;
     reeseDark.bitCrush = 0.05;
@@ -1955,14 +2169,14 @@ Song makeDemoSong() {
     acidScream.cutoff = 0.2;
     acidScream.resonance = 0.55;
     acidScream.filterMode = 1;
-    acidScream.filterDrive = 1.0;
+    acidScream.filterDrive = 0.9;
     acidScream.filterKeytrack = 0.55;
     acidScream.filterEnvelopeAmount = 0.72;
     acidScream.lfoFilterDepth = 0.18;
     acidScream.lfoRate = 6.5;
     acidScream.hardSyncEnabled = true;
     acidScream.hardSync = 0.32;
-    acidScream.drive = 0.58;
+    acidScream.drive = 0.48;
     acidScream.wavefold = 0.28;
     acidScream.combMix = 0.22;
     acidScream.combTime = 0.028;
@@ -1981,41 +2195,76 @@ Song makeDemoSong() {
     acidScream.filterEnvelope.release = 0.06;
 
     // Apply polish to all new patches
-    applyVintageHiFiPolish(bass, 0.82, false);
-    applyVintageHiFiPolish(kick, 0.66, true);
-    applyVintageHiFiPolish(snare, 0.70, true);
-    applyVintageHiFiPolish(hat, 0.60, true);
-    applyVintageHiFiPolish(lead, 0.76, false);
-    applyVintageHiFiPolish(pad, 0.92, false);
-    applyVintageHiFiPolish(arp, 0.78, false);
-    applyVintageHiFiPolish(stab, 0.74, false);
-    applyVintageHiFiPolish(drone, 0.94, false);
-    applyVintageHiFiPolish(clap, 0.68, true);
-    applyVintageHiFiPolish(tom, 0.64, true);
-    applyVintageHiFiPolish(ride, 0.58, true);
-    applyVintageHiFiPolish(acid, 0.72, false);
-    applyVintageHiFiPolish(bell, 0.86, false);
-    applyVintageHiFiPolish(choir, 0.98, false);
-    applyVintageHiFiPolish(reese, 0.84, false);
-    applyVintageHiFiPolish(rim, 0.62, true);
-    applyVintageHiFiPolish(indKick, 0.72, true);
-    applyVintageHiFiPolish(tightKick, 0.62, true);
-    applyVintageHiFiPolish(gatedSnare, 0.68, true);
-    applyVintageHiFiPolish(indSnare, 0.74, true);
-    applyVintageHiFiPolish(closedHat, 0.58, true);
-    applyVintageHiFiPolish(openHat, 0.56, true);
-    applyVintageHiFiPolish(crash, 0.60, true);
-    applyVintageHiFiPolish(indClap, 0.66, true);
-    applyVintageHiFiPolish(shaker, 0.52, true);
-    applyVintageHiFiPolish(floorTom, 0.62, true);
-    applyVintageHiFiPolish(highTom, 0.60, true);
-    applyVintageHiFiPolish(noiseHit, 0.78, true);
-    applyVintageHiFiPolish(subBass, 0.76, false);
-    applyVintageHiFiPolish(ebmDistBass, 0.80, false);
-    applyVintageHiFiPolish(darkBass, 0.74, false);
-    applyVintageHiFiPolish(fmBass, 0.78, false);
-    applyVintageHiFiPolish(reeseDark, 0.82, false);
-    applyVintageHiFiPolish(acidScream, 0.76, false);
+    applyVintageHiFiPolish(bass, kCompetitionPresetPolishSub, false);
+    applyVintageHiFiPolish(kick, kCompetitionPresetPolishPercussive, true);
+    applyVintageHiFiPolish(snare, kCompetitionPresetPolishPercussive, true);
+    applyVintageHiFiPolish(hat, kCompetitionPresetPolishPercussive - 0.06, true);
+    applyVintageHiFiPolish(lead, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(pad, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(arp, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(stab, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(drone, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(clap, kCompetitionPresetPolishPercussive - 0.02, true);
+    applyVintageHiFiPolish(tom, kCompetitionPresetPolishPercussive - 0.08, true);
+    applyVintageHiFiPolish(ride, kCompetitionPresetPolishPercussive - 0.08, true);
+    applyVintageHiFiPolish(acid, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(bell, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(choir, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(reese, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(rim, kCompetitionPresetPolishPercussive, true);
+    applyVintageHiFiPolish(indKick, kCompetitionPresetPolishPercussive - 0.04, true);
+    applyVintageHiFiPolish(tightKick, kCompetitionPresetPolishPercussive - 0.10, true);
+    applyVintageHiFiPolish(gatedSnare, kCompetitionPresetPolishPercussive, true);
+    applyVintageHiFiPolish(indSnare, kCompetitionPresetPolishPercussive, true);
+    applyVintageHiFiPolish(closedHat, kCompetitionPresetPolishPercussive - 0.06, true);
+    applyVintageHiFiPolish(openHat, kCompetitionPresetPolishPercussive - 0.08, true);
+    applyVintageHiFiPolish(crash, kCompetitionPresetPolishPercussive - 0.04, true);
+    applyVintageHiFiPolish(indClap, kCompetitionPresetPolishPercussive - 0.02, true);
+    applyVintageHiFiPolish(shaker, kCompetitionPresetPolishPercussive - 0.16, true);
+    applyVintageHiFiPolish(floorTom, kCompetitionPresetPolishPercussive - 0.08, true);
+    applyVintageHiFiPolish(highTom, kCompetitionPresetPolishPercussive - 0.10, true);
+    applyVintageHiFiPolish(noiseHit, kCompetitionPresetPolishMelodic, true);
+    applyVintageHiFiPolish(subBass, kCompetitionPresetPolishSub, false);
+    applyVintageHiFiPolish(ebmDistBass, kCompetitionPresetPolishSub, false);
+    applyVintageHiFiPolish(darkBass, kCompetitionPresetPolishSub, false);
+    applyVintageHiFiPolish(fmBass, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(reeseDark, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(acidScream, kCompetitionPresetPolishMelodic, false);
+    applyGenreBalance(bass);
+    applyGenreBalance(kick);
+    applyGenreBalance(snare);
+    applyGenreBalance(hat);
+    applyGenreBalance(lead);
+    applyGenreBalance(pad);
+    applyGenreBalance(arp);
+    applyGenreBalance(stab);
+    applyGenreBalance(drone);
+    applyGenreBalance(clap);
+    applyGenreBalance(tom);
+    applyGenreBalance(ride);
+    applyGenreBalance(acid);
+    applyGenreBalance(bell);
+    applyGenreBalance(choir);
+    applyGenreBalance(reese);
+    applyGenreBalance(rim);
+    applyGenreBalance(indKick);
+    applyGenreBalance(tightKick);
+    applyGenreBalance(gatedSnare);
+    applyGenreBalance(indSnare);
+    applyGenreBalance(closedHat);
+    applyGenreBalance(openHat);
+    applyGenreBalance(crash);
+    applyGenreBalance(indClap);
+    applyGenreBalance(shaker);
+    applyGenreBalance(floorTom);
+    applyGenreBalance(highTom);
+    applyGenreBalance(noiseHit);
+    applyGenreBalance(subBass);
+    applyGenreBalance(ebmDistBass);
+    applyGenreBalance(darkBass);
+    applyGenreBalance(fmBass);
+    applyGenreBalance(reeseDark);
+    applyGenreBalance(acidScream);
 
     const int bassInstrument = tracker.addInstrument(bass);
     const int kickInstrument = tracker.addInstrument(kick);
@@ -2103,14 +2352,15 @@ Song makeBlankSong() {
     SynthPatch initPatch;
     initPatch.name = "Init";
     initPatch.gain = 0.72;
-    initPatch.cutoff = 0.58;
+    initPatch.cutoff = 0.64;
     initPatch.resonance = 0.12;
     initPatch.drive = 0.08;
     initPatch.ampEnvelope.attack = 0.002;
     initPatch.ampEnvelope.decay = 0.09;
     initPatch.ampEnvelope.sustain = 0.76;
     initPatch.ampEnvelope.release = 0.14;
-    applyVintageHiFiPolish(initPatch, 0.52, false);
+    applyVintageHiFiPolish(initPatch, kCompetitionPresetPolishInit, false);
+    applyGenreBalance(initPatch);
     tracker.addInstrument(initPatch);
 
     Pattern pattern("Pattern1", 64, static_cast<int>(tracker.song().tracks.size()));

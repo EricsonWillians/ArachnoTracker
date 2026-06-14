@@ -32,13 +32,13 @@ struct MixBusState {
 };
 
 float safetySaturate(double value) {
-    const double threshold = 0.98;
+    const double threshold = 0.992;
     const double magnitude = std::abs(value);
     if (magnitude <= threshold) {
         return static_cast<float>(value);
     }
     const double excess = magnitude - threshold;
-    const double softened = threshold + std::tanh(excess * 8.0) * 0.02;
+    const double softened = threshold + std::tanh(excess * 10.0) * 0.018;
     return static_cast<float>(std::copysign(std::min(0.999, softened), value));
 }
 
@@ -93,9 +93,9 @@ void applyMixBus(
     if (sampleCount <= 0) {
         return;
     }
-    constexpr double limiterThreshold = 0.93;
-    const double attackCoeff = std::exp(-1.0 / (sampleRate * 0.0006));
-    const double releaseCoeff = std::exp(-1.0 / (sampleRate * 0.12));
+    constexpr double limiterThreshold = 0.96;
+    const double attackCoeff = std::exp(-1.0 / (sampleRate * 0.0010));
+    const double releaseCoeff = std::exp(-1.0 / (sampleRate * 0.16));
 
     for (int sample = 0; sample < sampleCount; ++sample) {
         double inLeft = static_cast<double>(left[sample]) * inputTrim;

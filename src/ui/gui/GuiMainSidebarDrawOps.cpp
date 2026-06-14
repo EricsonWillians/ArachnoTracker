@@ -1,12 +1,57 @@
 #include "ui/gui/GuiMainSidebarDrawOps.h"
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <string>
+#include <vector>
 
+#include "ui/gui/GuiInstrumentBrowserOps.h"
 #include "Note.h"
 
 namespace arachno {
+
+namespace {
+
+std::string instrumentCategoryFromName(const std::string& name) {
+    const std::string lowered = [&name]() {
+        std::string value = name;
+        for (char& ch : value) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return value;
+    }();
+    const auto token = [&](const std::string& value) {
+        return lowered.find(value) != std::string::npos;
+    };
+    if (token("kick") || token("snare") || token("hat") || token("tom") || token("crash") || token("ride")) {
+        return "Percussion";
+    }
+    if (token("bass") || token("sub") || token("ebm") || token("reese")) {
+        return "Bass";
+    }
+    if (token("lead") || token("solo") || token("arp") || token("pluck")) {
+        return "Lead";
+    }
+    if (token("pad") || token("drone") || token("stabs") || token("soundscape") || token("choir") || token("bell")) {
+        return "Pads";
+    }
+    if (token("clap") || token("shaker") || token("noise")) {
+        return "FX";
+    }
+    if (token("guitar")) {
+        return "Guitar";
+    }
+    if (token("strings") || token("violin") || token("orchestra")) {
+        return "Strings";
+    }
+    if (token("brass") || token("trumpet") || token("sax") || token("horn")) {
+        return "Brass";
+    }
+    return "MIDI";
+}
+
+} // namespace
 
 int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
     auto sidebarLine = [&](const std::string& line, bool muted = false) {
@@ -259,7 +304,8 @@ int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
     const int listRows = std::max(3, (context.gridTop + context.gridHeight - sy - 142) / 16);
     context.instrumentListVisibleRows = listRows;
     context.clampInstrumentListWindow();
-    const int instrumentCount = static_cast<int>(snap.editor.instruments.size());
+    const std::vector<int> orderedInstrumentIndices = filteredInstrumentIndicesForQuery(snap, "");
+    const int instrumentCount = static_cast<int>(orderedInstrumentIndices.size());
     const UiRect instPrevRect {context.sidebarLeft + 8, sy - 12, 28, 20};
     const UiRect instNextRect {context.sidebarLeft + 40, sy - 12, 28, 20};
     const UiRect instAudRect {context.sidebarLeft + 72, sy - 12, 48, 20};
@@ -289,25 +335,42 @@ int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
     const int viewStart = std::clamp(context.instrumentListStart, 0, std::max(0, instrumentCount - 1));
     const int viewEnd = std::min(instrumentCount, viewStart + listRows);
     for (int index = viewStart; index < viewEnd; ++index) {
-        const InstrumentSummary& instrument = snap.editor.instruments[static_cast<std::size_t>(index)];
+        const int instrumentIndex = orderedInstrumentIndices[static_cast<std::size_t>(index)];
+        const bool isStandardMidi = isStandardMidiBrowserIndex(instrumentIndex);
+        std::string category;
+        std::string name;
+        int noteUseCount = 0;
+        bool active = false;
+        if (isStandardMidi) {
+            category = standardMidiBrowserCategory(instrumentIndex);
+            name = standardMidiBrowserName(instrumentIndex);
+        } else {
+            const InstrumentSummary& instrument = snap.editor.instruments[static_cast<std::size_t>(instrumentIndex)];
+            category = instrumentCategoryFromName(instrument.name);
+            name = instrument.name;
+            noteUseCount = instrument.noteUseCount;
+            active = instrument.active;
+        }
         const UiRect hit {context.sidebarLeft + 6, sy - 12, context.sidebarWidth - 14, 16};
-        if (index == context.armedInstrument || instrument.active) {
+        if (instrumentIndex == context.armedInstrument || active) {
             context.drawFilledRect(hit.x, hit.y + 1, hit.width, hit.height - 2, context.colorSelection);
         }
         std::ostringstream line;
-        line << (index == context.armedInstrument ? "*" : " ")
-             << (instrument.active ? ">" : " ")
+        line << (instrumentIndex == context.armedInstrument ? "*" : " ")
+             << (active ? ">" : " ")
+             << " ["
+             << category
+             << "] "
+             << (instrumentIndex < 10 ? "0" : "") << instrumentIndex
              << " "
-             << (index < 10 ? "0" : "") << index
-             << " "
-             << instrument.name
-             << " (" << instrument.noteUseCount << ")";
+             << name
+             << " (" << noteUseCount << ")";
         context.drawText(
             context.sidebarLeft + 8,
             sy,
             line.str(),
-            index == context.armedInstrument ? context.colorText : context.colorMutedText);
-        context.instrumentHitTargets.push_back({hit, index});
+            instrumentIndex == context.armedInstrument ? context.colorText : context.colorMutedText);
+        context.instrumentHitTargets.push_back({hit, instrumentIndex});
         sy += 16;
     }
     if (instrumentCount > viewEnd) {

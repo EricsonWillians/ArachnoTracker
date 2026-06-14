@@ -102,7 +102,7 @@ double wavefoldSample(double value, double amount) {
 double asymmetricSaturation(double value, double drive, double asymmetry) {
     const double clampedDrive = std::max(0.0, drive);
     const double shapedAsymmetry = clampSigned(asymmetry);
-    const double gain = 1.0 + clampedDrive * 10.0;
+    const double gain = 1.0 + clampedDrive * 7.0;
     const double biased = value * gain + shapedAsymmetry * 0.22;
     const double positive = std::tanh(std::max(0.0, biased) * (1.0 + shapedAsymmetry * 0.35));
     const double negative = std::tanh(std::min(0.0, biased) * (1.0 - shapedAsymmetry * 0.2));
@@ -117,13 +117,13 @@ double harmonicExciter(double value, double amount) {
     const double even = std::tanh(value * 1.9);
     const double odd = std::tanh(value * 3.7);
     const double colored = even * 0.58 + odd * 0.42;
-    const double mix = clamped * 0.42;
+    const double mix = clamped * 0.34;
     return value * (1.0 - mix) + colored * mix;
 }
 
 double nonlinearSmoothingAlpha(double drive, double analogColor) {
-    const double harshness = std::clamp(drive * 0.8 + analogColor * 0.7, 0.0, 1.6);
-    return std::clamp(0.035 + harshness * 0.09, 0.03, 0.18);
+    const double harshness = std::clamp(drive * 0.8 + analogColor * 0.7, 0.0, 1.3);
+    return std::clamp(0.035 + harshness * 0.08, 0.03, 0.16);
 }
 
 double softKneeLimiter(double value, double threshold, double ratio) {
@@ -616,6 +616,7 @@ void Synthesizer::reset() {
     outputDcInputRight_ = 0.0;
     outputDcOutputRight_ = 0.0;
     outputLimiterGain_ = 1.0;
+    truePeakLimiterGain_ = 1.0;
     outputPeakFollower_ = 0.0;
     outputRmsFollower_ = 0.0;
     smoothedDspLoadPercent_ = 0.0;
@@ -697,9 +698,12 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
     const double peakAttackCoeff = std::exp(-1.0 / (sampleRate_ * 0.00085));
     const double peakReleaseCoeff = std::exp(-1.0 / (sampleRate_ * 0.075));
     const double rmsCoeff = std::exp(-1.0 / (sampleRate_ * 0.02));
-    constexpr double limiterThreshold = 0.82;
+    constexpr double limiterThreshold = 0.92;
     const double limiterAttackCoeff = std::exp(-1.0 / (sampleRate_ * 0.00045));
     const double limiterReleaseCoeff = std::exp(-1.0 / (sampleRate_ * 0.09));
+    constexpr double truePeakThreshold = 0.98;
+    const double truePeakAttackCoeff = std::exp(-1.0 / (sampleRate_ * 0.00032));
+    const double truePeakReleaseCoeff = std::exp(-1.0 / (sampleRate_ * 0.12));
     constexpr double dcCoeff = 0.995;
     double blockPreLimiterPeak = 0.0;
     double blockPostLimiterPeak = 0.0;
@@ -715,7 +719,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                                           double& outSvfK,
                                           double& outResonanceComp,
                                           int& outFilterMode) {
-        const double frequency = voice.baseFrequency
+        [[maybe_unused]] const double frequency = voice.baseFrequency
             * centsToRatio(lfoValue * voice.patch.vibratoCents)
             * semitonesToRatio(pitchEnvelopeValue + transientPitchEnvelopeValue);
         const double filterEnvelope = envelopeFor(
@@ -723,6 +727,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             ageSeconds,
             voice.gateSeconds,
             voice.patch.filterEnvelopeCurve);
+        (void)fmDepthHint;
         const double keytrack = clamp01(voice.patch.filterKeytrack);
         const double keytrackBias = ((static_cast<double>(voice.note.midi - 60) / 48.0) * 0.18) * keytrack;
         const double cutoffNormalized = clamp01(
@@ -1447,16 +1452,17 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             }
 
             const double transientAmountEffective = panicLoad ? 0.0 : transientAmount;
+            const double transientAmountSafe = std::clamp(transientAmountEffective, 0.0, 0.88);
             const double transientDecay = std::max(0.001, voice.patch.transientDecay);
             const double transientEnvelope = voice.transientEnvelopeState;
             const double clickEnvelope = voice.age < 0.002 ? 1.0 - voice.age / 0.002 : 0.0;
             const int burstCount = extremeLoad
                 ? 1
-                : std::clamp(voice.patch.transientBurstCount, 1, 12);
+                : std::clamp(voice.patch.transientBurstCount, 1, 4);
             const double burstSpacing = std::max(0.0005, voice.patch.transientBurstSpacing);
             const double burstDecay = clamp01(voice.patch.transientBurstDecay);
             double burstEnvelope = 0.0;
-            if (transientAmountEffective > 0.0) {
+            if (transientAmountSafe > 0.0) {
                 const double transientWindow = transientDecay * 6.0
                     + burstSpacing * static_cast<double>(std::max(0, burstCount - 1));
                 if (voice.age <= transientWindow) {
@@ -1477,7 +1483,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double transientTone = clamp01(voice.patch.transientTone);
             const double transientBright = transientTone * transientTone * (0.4 + transientTone * 0.6);
             double transientNoise = 0.0;
-            if (transientAmountEffective > 0.0001) {
+            if (transientAmountSafe > 0.0001) {
                 const double transientSource = pinkNoise * (1.0 - transientBright * 0.72)
                     + whiteNoise * (0.34 + transientBright * 0.66);
                 transientNoise = sculptNoiseSample(
@@ -1487,7 +1493,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             }
             const double transientShape = 1.0 + clamp01(voice.patch.transientShape) * 8.0;
             const double shapedBurst = std::tanh(burstEnvelope * transientShape);
-            const double transientBodyAmount = transientAmountEffective
+            const double transientBodyAmount = transientAmountSafe
                 * (0.18 + clamp01(voice.patch.transientShape) * 0.42)
                 * (0.45 + velocityNorm * 0.55);
             const double transientBodyFreq = std::clamp(
@@ -1499,8 +1505,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double transientBody = std::sin(voice.transientBodyPhase * twoPi)
                 * std::exp(-voice.age / std::max(0.002, transientDecay * 0.7));
             value += clickEnvelope * (panicLoad ? 0.0 : clamp01(voice.patch.click))
-                + transientEnvelope * transientAmountEffective * transientNoise
-                + shapedBurst * transientAmountEffective * transientNoise * 0.65
+                + transientEnvelope * transientAmountSafe * transientNoise
+                + shapedBurst * transientAmountSafe * transientNoise * 0.42
                 + transientBody * transientBodyAmount;
 
             const double drive = std::max(0.0, voice.patch.drive) * (0.72 + antiAliasScale * 0.28);
@@ -1516,7 +1522,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 * polyNoiseScale;
             value += analogNoise;
             const double preNonlinear = value;
-            const double satDrive = drive * (0.85 + analogColor * 0.55 + analogWarmth * 0.42);
+            const double satDrive = drive * (0.82 + analogColor * 0.45 + analogWarmth * 0.34);
             const double satAsymmetry = (velocityNorm - 0.5) * 0.45 + voice.toneTiltCached * 0.2;
             double nonlinear = asymmetricSaturation(preNonlinear, satDrive, satAsymmetry);
             if (!heavyLoad) {
@@ -1527,20 +1533,20 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             if (!extremeLoad && !panicLoad) {
                 nonlinear = harmonicExciter(
                     nonlinear,
-                    analogColor * 0.62 + drive * 0.25 + analogWarmth * 0.34 + hifiExciter * 0.45);
+                    analogColor * 0.52 + drive * 0.20 + analogWarmth * 0.28 + hifiExciter * 0.38);
             }
             voice.nonlinearPrevInput = preNonlinear;
             const double smoothAlpha = nonlinearSmoothingAlpha(drive, analogColor);
             voice.nonlinearSmoothState += smoothAlpha * (nonlinear - voice.nonlinearSmoothState);
-            const double smoothMix = std::clamp(0.12 + drive * 0.28 + analogColor * 0.2, 0.0, 0.65);
+            const double smoothMix = std::clamp(0.12 + drive * 0.24 + analogColor * 0.18, 0.0, 0.58);
             nonlinear = nonlinear * (1.0 - smoothMix) + voice.nonlinearSmoothState * smoothMix;
             const double bodyAlpha = std::clamp((twoPi * 140.0) * invSampleRate, 0.002, 0.12);
             voice.lowBodyState += bodyAlpha * (preNonlinear - voice.lowBodyState);
             const double lowPunch = voice.lowPunchCached;
             const double bodyBlend = std::clamp(
-                voice.subAmountCached * 0.28 + analogColor * 0.25 + drive * 0.08 + lowPunch * 0.26 + analogWarmth * 0.24,
+                voice.subAmountCached * 0.28 + analogColor * 0.22 + drive * 0.08 + lowPunch * 0.22 + analogWarmth * 0.18,
                 0.0,
-                0.62);
+                0.56);
             value = nonlinear * (1.0 - bodyBlend) + voice.lowBodyState * bodyBlend;
             const double airAlpha = std::clamp((twoPi * 3200.0) * invSampleRate, 0.02, 0.35);
             voice.airExciterState += airAlpha * (value - voice.airExciterState);
@@ -1548,19 +1554,19 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double airAmount = panicLoad
                 ? 0.0
                 : std::clamp(
-                    analogColor * 0.18 + drive * 0.12 + voice.airBoostCached * 0.3 + analogWarmth * 0.08 + hifiExciter * 0.22,
+                    analogColor * 0.14 + drive * 0.10 + voice.airBoostCached * 0.22 + analogWarmth * 0.06 + hifiExciter * 0.18,
                     0.0,
-                    0.42);
+                    0.36);
             value += airBand * airAmount;
             const double tapeColor = voice.tapeColorCached;
             if (tapeColor > 0.0001) {
-                const double tapeDrive = 1.0 + tapeColor * 4.5 + analogWarmth * 1.6;
+                const double tapeDrive = 1.0 + tapeColor * 3.4 + analogWarmth * 1.0;
                 double tapeSample = std::tanh(value * tapeDrive);
                 tapeSample = softKneeLimiter(tapeSample + voice.lowBodyState * tapeColor * 0.12, 1.0, 2.0 + tapeColor * 3.0);
-                const double tapeMix = tapeColor * 0.58;
+                const double tapeMix = tapeColor * 0.42;
                 value = value * (1.0 - tapeMix) + tapeSample * tapeMix;
             }
-            value *= (1.0 + drive * 0.34 + analogColor * 0.18 + analogWarmth * 0.14);
+            value *= (1.0 + drive * 0.14 + analogColor * 0.06 + analogWarmth * 0.04);
             value = softKneeLimiter(value, 1.05, 3.2);
 
             const double toneTilt = voice.toneTiltCached;
@@ -1593,24 +1599,24 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             value *= voice.gainCached * velocityGain;
             const double transformer = voice.outputTransformerCached;
             if (transformer > 0.0001) {
-                const double transformerDrive = 1.0 + transformer * 5.5;
-                const double transformed = asymmetricSaturation(value, transformerDrive * 0.35, 0.14);
-                const double transformerMix = std::clamp(transformer * 0.72, 0.0, 0.72);
+                const double transformerDrive = 1.0 + transformer * 3.2;
+                const double transformed = asymmetricSaturation(value, transformerDrive * 0.32, 0.14);
+                const double transformerMix = std::clamp(transformer * 0.42, 0.0, 0.42);
                 value = value * (1.0 - transformerMix) + transformed * transformerMix;
             }
             const double outputGlue = voice.outputGlueCached;
             if (outputGlue > 0.0001) {
-                const double glueDrive = 1.0 + outputGlue * 3.8;
+                const double glueDrive = 1.0 + outputGlue * 2.0;
                 const double glued = std::tanh(value * glueDrive) / glueDrive;
-                const double glueMix = std::clamp(outputGlue * 0.72, 0.0, 0.72);
+                const double glueMix = std::clamp(outputGlue * 0.46, 0.0, 0.46);
                 value = value * (1.0 - glueMix) + glued * glueMix;
             }
             const double outputSoftClip = voice.outputSoftClipCached;
             if (outputSoftClip > 0.0001) {
-                const double clipThreshold = std::clamp(1.0 - outputSoftClip * 0.38, 0.58, 1.0);
-                const double clipRatio = std::clamp(2.1 + outputSoftClip * 7.2, 2.1, 10.0);
+                const double clipThreshold = std::clamp(1.0 - outputSoftClip * 0.14, 0.76, 1.0);
+                const double clipRatio = std::clamp(2.2 + outputSoftClip * 2.8, 2.2, 5.4);
                 const double clipped = softKneeLimiter(value, clipThreshold, clipRatio);
-                const double clipMix = std::clamp(outputSoftClip * 0.78, 0.0, 0.78);
+                const double clipMix = std::clamp(outputSoftClip * 0.36, 0.0, 0.36);
                 value = value * (1.0 - clipMix) + clipped * clipMix;
             }
             if (voice.patch.bitCrushEnabled) {
@@ -1628,8 +1634,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 : (value - voice.toneTiltState) * 0.42;
             const double sideValue = crushSample(
                 (simplifiedNonlinear
-                        ? fastSaturate(sideSeed * (1.0 + drive * 4.0))
-                        : std::tanh(sideSeed * (1.0 + drive * 4.0)))
+                ? fastSaturate(sideSeed * (1.0 + drive * 3.0))
+                        : std::tanh(sideSeed * (1.0 + drive * 2.4)))
                     * ampEnvelope
                     * voice.gainCached
                     * velocityGain
@@ -1726,7 +1732,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     voice.chorusToneStateR += toneAlpha * (chorusWetRight - voice.chorusToneStateR);
                     chorusWetLeft = voice.chorusToneStateL;
                     chorusWetRight = voice.chorusToneStateR;
-                    const double chorusCompDrive = 1.0 + chorusLuxury * 2.4 + chorusSaturation * 3.2;
+                    const double chorusCompDrive = 1.0 + chorusLuxury * 1.8 + chorusSaturation * 2.2;
                     chorusWetLeft = std::tanh(chorusWetLeft * chorusCompDrive) / chorusCompDrive;
                     chorusWetRight = std::tanh(chorusWetRight * chorusCompDrive) / chorusCompDrive;
                     const double bbdNoise = randomSymmetric(voice.noiseState)
@@ -1779,15 +1785,22 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                         + voice.delayDiffuseStateR * (diffusionBlend * 0.45);
                     voice.delayDiffuseStateL = diffuseLeft;
                     voice.delayDiffuseStateR = diffuseRight;
-                    const double delayFeedback = clamp01(voice.patch.delayFeedback) * 0.96;
+                    const double delayFeedbackRaw = clamp01(voice.patch.delayFeedback) * 0.96;
                     const double delayTone = clamp01(voice.patch.delayTone);
                     const double toneAlpha = std::clamp(0.006 + delayTone * 0.42, 0.006, 0.5);
                     const double delayCrossfeed = std::clamp(0.04 + voice.delayStereoCached * 0.16 + voice.delayCrossfeedCached * 0.34, 0.03, 0.58);
-                    const double feedbackInLeft = diffuseLeft * delayFeedback + diffuseRight * (delayFeedback * delayCrossfeed);
-                    const double feedbackInRight = diffuseRight * delayFeedback + diffuseLeft * (delayFeedback * delayCrossfeed);
-                    voice.delayToneStateL += toneAlpha * (feedbackInLeft - voice.delayToneStateL);
-                    voice.delayToneStateR += toneAlpha * (feedbackInRight - voice.delayToneStateR);
-                    const double feedbackDrive = 1.0 + voice.delayDriveCached * 3.2;
+                    const double feedbackInLeft = diffuseLeft * delayFeedbackRaw + diffuseRight * (delayFeedbackRaw * delayCrossfeed);
+                    const double feedbackInRight = diffuseRight * delayFeedbackRaw + diffuseLeft * (delayFeedbackRaw * delayCrossfeed);
+                    const double delayFeedbackSafety = std::clamp(
+                        1.0 / (1.0 + (std::abs(feedbackInLeft) + std::abs(feedbackInRight)) * 0.45),
+                        0.58,
+                        1.0);
+                    const double delayFeedback = delayFeedbackRaw * delayFeedbackSafety;
+                    const double delayFeedbackInLeft = diffuseLeft * delayFeedback + diffuseRight * (delayFeedback * delayCrossfeed);
+                    const double delayFeedbackInRight = diffuseRight * delayFeedback + diffuseLeft * (delayFeedback * delayCrossfeed);
+                    voice.delayToneStateL += toneAlpha * (delayFeedbackInLeft - voice.delayToneStateL);
+                    voice.delayToneStateR += toneAlpha * (delayFeedbackInRight - voice.delayToneStateR);
+                    const double feedbackDrive = 1.0 + voice.delayDriveCached * 2.6;
                     const double drivenFeedbackL = std::tanh(voice.delayToneStateL * feedbackDrive);
                     const double drivenFeedbackR = std::tanh(voice.delayToneStateR * feedbackDrive);
                     const double tapeNoise = randomSymmetric(voice.noiseState)
@@ -1795,8 +1808,10 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                         * (0.35 + delayMix * 0.65)
                         * polyNoiseScale
                         * (panicLoad ? 0.45 : 1.0);
-                    voice.fxDelayLeft[static_cast<std::size_t>(fxWriteIndex)] = static_cast<float>(voiceLeft + drivenFeedbackL + tapeNoise);
-                    voice.fxDelayRight[static_cast<std::size_t>(fxWriteIndex)] = static_cast<float>(voiceRight + drivenFeedbackR - tapeNoise);
+                    const double delayWriteLeft = std::clamp(voiceLeft + drivenFeedbackL + tapeNoise, -2.6, 2.6);
+                    const double delayWriteRight = std::clamp(voiceRight + drivenFeedbackR - tapeNoise, -2.6, 2.6);
+                    voice.fxDelayLeft[static_cast<std::size_t>(fxWriteIndex)] = static_cast<float>(delayWriteLeft);
+                    voice.fxDelayRight[static_cast<std::size_t>(fxWriteIndex)] = static_cast<float>(delayWriteRight);
                     const double duckGain = 1.0 / (1.0 + voice.delayDuckingCached * std::abs((voiceLeft + voiceRight) * 0.5) * 6.0);
                     const double effectiveDelayMix = delayMix * duckGain;
                     voiceLeft = voiceLeft * (1.0 - effectiveDelayMix) + diffuseLeft * effectiveDelayMix;
@@ -2007,7 +2022,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
         const double squared = 0.5 * (mixedLeft * mixedLeft + mixedRight * mixedRight);
         outputRmsFollower_ = squared + (outputRmsFollower_ - squared) * rmsCoeff;
         const double loudnessProxy = std::max(outputPeakFollower_, std::sqrt(std::max(0.0, outputRmsFollower_)) * 1.25);
-        const double autoTrim = 1.0 / (1.0 + loudnessProxy * 0.62);
+        const double autoTrim = 1.0 / (1.0 + loudnessProxy * 0.50);
         mixedLeft *= autoTrim;
         mixedRight *= autoTrim;
         blockPreLimiterPeak = std::max(blockPreLimiterPeak, std::max(std::abs(mixedLeft), std::abs(mixedRight)));
@@ -2018,14 +2033,14 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
         outputLimiterGain_ = targetLimiter + (outputLimiterGain_ - targetLimiter) * coeff;
         mixedLeft *= outputLimiterGain_;
         mixedRight *= outputLimiterGain_;
-        mixedLeft = softKneeLimiter(mixedLeft, 0.84, 6.4);
-        mixedRight = softKneeLimiter(mixedRight, 0.84, 6.4);
+        mixedLeft = softKneeLimiter(mixedLeft, 0.91, 4.8);
+        mixedRight = softKneeLimiter(mixedRight, 0.91, 4.8);
         if (heavyLoad) {
-            mixedLeft = fastSaturate(mixedLeft * 0.82) / 0.82;
-            mixedRight = fastSaturate(mixedRight * 0.82) / 0.82;
+            mixedLeft = std::tanh(mixedLeft * 0.62) / 0.62;
+            mixedRight = std::tanh(mixedRight * 0.62) / 0.62;
         } else {
-            mixedLeft = std::tanh(mixedLeft * 0.70) / 0.70;
-            mixedRight = std::tanh(mixedRight * 0.70) / 0.70;
+                mixedLeft = std::tanh(mixedLeft * 0.62) / 0.62;
+                mixedRight = std::tanh(mixedRight * 0.62) / 0.62;
         }
 
         // === TRUE PEAK LIMITING (Phase 6) ===
@@ -2035,11 +2050,32 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
         truePeakPrevLeft_ = mixedLeft;
         truePeakPrevRight_ = mixedRight;
         const double truePeakMax = std::max(truePeakLeft, truePeakRight);
-        if (truePeakMax > 1.0) {
-            const double tpGain = 1.0 / truePeakMax;
-            mixedLeft *= tpGain;
-            mixedRight *= tpGain;
+        const double targetTruePeak = truePeakMax > truePeakThreshold
+            ? truePeakThreshold / std::max(truePeakMax, 1e-9)
+            : 1.0;
+        const double truePeakCoeff = targetTruePeak < truePeakLimiterGain_
+            ? truePeakAttackCoeff
+            : truePeakReleaseCoeff;
+        truePeakLimiterGain_ = targetTruePeak + (truePeakLimiterGain_ - targetTruePeak) * truePeakCoeff;
+        mixedLeft *= truePeakLimiterGain_;
+        mixedRight *= truePeakLimiterGain_;
+
+        mixedLeft *= 0.70;
+        mixedRight *= 0.70;
+
+        if (mixedLeft > 1.0) {
+            mixedLeft = 1.0;
+        } else if (mixedLeft < -1.0) {
+            mixedLeft = -1.0;
         }
+        if (mixedRight > 1.0) {
+            mixedRight = 1.0;
+        } else if (mixedRight < -1.0) {
+            mixedRight = -1.0;
+        }
+
+        mixedLeft = 1.5 * mixedLeft - 0.5 * mixedLeft * mixedLeft * mixedLeft;
+        mixedRight = 1.5 * mixedRight - 0.5 * mixedRight * mixedRight * mixedRight;
 
         const double dcLeft = mixedLeft - outputDcInputLeft_ + dcCoeff * outputDcOutputLeft_;
         const double dcRight = mixedRight - outputDcInputRight_ + dcCoeff * outputDcOutputRight_;

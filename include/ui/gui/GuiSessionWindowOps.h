@@ -83,6 +83,7 @@ struct GuiLifecycleActionContext {
     UnsavedDecisionPromptState& unsavedPrompt;
     bool& hasDeferredPostSaveAction;
     AppActionRequest& deferredPostSaveAction;
+    std::function<void()> refreshSnapshot;
     std::function<void(
         InlinePromptKind,
         const std::string&,

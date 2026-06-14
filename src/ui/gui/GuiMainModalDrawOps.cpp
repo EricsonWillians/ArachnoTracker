@@ -1,4 +1,5 @@
 #include "ui/gui/GuiMainModalDrawOps.h"
+#include "ui/gui/GuiInstrumentBrowserOps.h"
 
 #include <algorithm>
 #include <array>
@@ -114,12 +115,18 @@ void drawMainModalOverlays(const GuiMainModalDrawContext& context) {
                     break;
                 }
                 const int instrumentIndex = filtered[static_cast<std::size_t>(filteredRow)];
-                if (instrumentIndex < 0
-                    || instrumentIndex >= static_cast<int>(context.snapshot.editor.instruments.size())) {
+                const bool standardMidi = isStandardMidiBrowserIndex(instrumentIndex);
+                if (!standardMidi
+                    && (instrumentIndex < 0
+                        || instrumentIndex >= static_cast<int>(context.snapshot.editor.instruments.size()))) {
                     continue;
                 }
-                const InstrumentSummary& instrument =
-                    context.snapshot.editor.instruments[static_cast<std::size_t>(instrumentIndex)];
+                std::string name = standardMidi ? standardMidiBrowserName(instrumentIndex) : "";
+                if (name.empty() && !standardMidi) {
+                    const InstrumentSummary& instrument =
+                        context.snapshot.editor.instruments[static_cast<std::size_t>(instrumentIndex)];
+                    name = instrument.name;
+                }
                 const UiRect rowRect {
                     context.instrumentBrowserListRect.x + 2,
                     context.instrumentBrowserListRect.y + 2 + (row * rowHeight),
@@ -135,9 +142,14 @@ void drawMainModalOverlays(const GuiMainModalDrawContext& context) {
                         context.colorSelection);
                 }
                 std::ostringstream line;
-                line << (instrumentIndex < 10 ? "0" : "") << instrumentIndex
-                     << "  " << instrument.name
-                     << "  (" << instrument.noteUseCount << ")";
+                if (standardMidi) {
+                    line << "StdMIDI  " << (filteredRow < 10 ? "0" : "") << filteredRow << "  " << name;
+                } else {
+                    const InstrumentSummary& instrument =
+                        context.snapshot.editor.instruments[static_cast<std::size_t>(instrumentIndex)];
+                    line << (instrumentIndex < 10 ? "0" : "") << instrumentIndex << "  " << name
+                         << "  (" << instrument.noteUseCount << ")";
+                }
                 context.drawText(
                     rowRect.x + 6,
                     rowRect.y + 13,

@@ -133,6 +133,9 @@ void clearUnsavedPromptFromWindowState(
 
 void runLifecycleActionFromWindowState(const GuiLifecycleActionContext& context, const AppActionRequest& request) {
     const AppActionResult result = context.runAction(request);
+    if (result.ok && !result.requiresUnsavedDecision && !result.requiresSaveAs) {
+        context.refreshSnapshot();
+    }
     if (result.requiresUnsavedDecision) {
         context.unsavedPrompt.active = true;
         context.unsavedPrompt.request = request;

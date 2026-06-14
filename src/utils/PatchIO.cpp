@@ -1,5 +1,7 @@
 #include "PatchIO.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -11,6 +13,34 @@
 namespace arachno {
 
 namespace {
+constexpr double kCompetitionPresetQualityProject = 0.82;
+constexpr double kCompetitionPresetQualityPercussiveProject = 0.76;
+
+bool looksLikePercussivePatch(const std::string& name) {
+    std::string lowerName;
+    lowerName.reserve(name.size());
+    for (unsigned char c : name) {
+        lowerName.push_back(static_cast<char>(std::tolower(c)));
+    }
+    constexpr const char* kPercussiveTokens[] = {
+        "kick",
+        "snare",
+        "hat",
+        "clap",
+        "tom",
+        "ride",
+        "rim",
+        "cym",
+        "shaker",
+        "drum",
+        "perc",
+        "noisehit"};
+
+    return std::any_of(std::begin(kPercussiveTokens), std::end(kPercussiveTokens), [&](const char* token) {
+        return lowerName.find(token) != std::string::npos;
+    });
+}
+
 void expectToken(std::istream& in, const std::string& expected) {
     std::string token;
     in >> token;
@@ -807,6 +837,12 @@ SynthPatch loadPatch(const std::string& path) {
     patch.filterEnvelope.release = readValue<double>(in, "filter release");
 
     expectToken(in, "end_patch");
+    applyCompetitionPresetQuality(
+        patch,
+        looksLikePercussivePatch(patch.name)
+            ? kCompetitionPresetQualityPercussiveProject
+            : kCompetitionPresetQualityProject,
+        looksLikePercussivePatch(patch.name));
     return patch;
 }
 

@@ -17,6 +17,85 @@ std::string normalizeParameterName(std::string name) {
     });
     return name;
 }
+
+std::string lowerCopy(const std::string& value) {
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return lowered;
+}
+
+bool containsToken(const std::string& haystack, const char* needle) {
+    return haystack.find(needle) != std::string::npos;
+}
+
+bool looksLikeBassPatchByName(const std::string& name) {
+    const std::string lowerName = lowerCopy(name);
+    constexpr const char* kBassTokens[] = {
+        "bass",
+        "sub",
+        "drone",
+        "reese",
+        "fmbass",
+        "fm bass",
+        "dist",
+        "low",
+        "crusher",
+        "destroyer",
+        "industrial"};
+
+    return std::any_of(std::begin(kBassTokens), std::end(kBassTokens), [&](const char* token) {
+        return containsToken(lowerName, token);
+    });
+}
+
+bool looksLikeLeadPatchByName(const std::string& name) {
+    const std::string lowerName = lowerCopy(name);
+    constexpr const char* kLeadTokens[] = {
+        "lead",
+        "arp",
+        "scream",
+        "saw",
+        "stab",
+        "acid",
+        "bright",
+        "twin",
+        "glass",
+        "bell",
+        "choir",
+        "pad"};
+
+    return std::any_of(std::begin(kLeadTokens), std::end(kLeadTokens), [&](const char* token) {
+        return containsToken(lowerName, token);
+    });
+}
+
+bool looksLikePercussivePatchByName(const std::string& name) {
+    const std::string lowerName = lowerCopy(name);
+    constexpr const char* kPercussiveTokens[] = {
+        "kick",
+        "snare",
+        "hat",
+        "hihat",
+        "clap",
+        "tom",
+        "ride",
+        "rim",
+        "cym",
+        "cymbal",
+        "shaker",
+        "drum",
+        "perc",
+        "noisehit",
+        "closed",
+        "open",
+        "attack"};
+
+    return std::any_of(std::begin(kPercussiveTokens), std::end(kPercussiveTokens), [&](const char* token) {
+        return containsToken(lowerName, token);
+    });
+}
 } // namespace
 
 bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, double value) {
@@ -324,6 +403,156 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
     }
 
     return true;
+}
+
+void applyCompetitionPresetQuality(SynthPatch& patch, double intensity, bool percussive) {
+    const double t = std::clamp(intensity, 0.0, 1.0);
+    const bool isPercussive = percussive || looksLikePercussivePatchByName(patch.name);
+    const bool looksBass = looksLikeBassPatchByName(patch.name);
+    const bool looksLead = looksLikeLeadPatchByName(patch.name);
+    const auto applyMin = [&](double& value, double minValue, double range) {
+        value = std::clamp(std::max(value, minValue + t * range), 0.0, 1.0);
+    };
+
+    applyMin(patch.analogColor, 0.40, 0.26);
+    applyMin(patch.analogWarmth, 0.40, 0.30);
+    applyMin(patch.voiceSlop, 0.20, 0.28);
+    applyMin(patch.phaseScatter, 0.18, 0.28);
+    applyMin(patch.unisonWarp, 0.10, 0.30);
+    applyMin(patch.unisonHumanize, 0.18, 0.36);
+    applyMin(patch.fmColor, 0.34, 0.34);
+    applyMin(patch.fmSpread, 0.10, 0.22);
+    applyMin(patch.chorusTone, 0.28, 0.26);
+    applyMin(patch.chorusJitter, 0.14, 0.20);
+    applyMin(patch.chorusSaturation, 0.10, 0.12);
+    applyMin(patch.delayDiffusion, 0.20, 0.24);
+    applyMin(patch.delayWow, 0.10, 0.28);
+    applyMin(patch.delayCrossfeed, 0.18, 0.22);
+    applyMin(patch.reverbDecay, 0.38, 0.30);
+    applyMin(patch.reverbEarlyMix, 0.16, 0.18);
+    applyMin(patch.reverbTone, 0.24, 0.22);
+    applyMin(patch.reverbChorus, 0.08, 0.16);
+    applyMin(patch.reverbBloom, 0.12, 0.20);
+    applyMin(patch.consoleCrosstalk, 0.03, 0.14);
+    applyMin(patch.stereoDepth, 0.14, 0.30);
+    applyMin(patch.hifiExciter, 0.08, 0.18);
+    applyMin(patch.outputTransformer, 0.08, 0.16);
+    applyMin(patch.outputSoftClip, 0.07, 0.15);
+    applyMin(patch.outputGlue, 0.18, 0.16);
+    applyMin(patch.tapeColor, 0.10, 0.18);
+    applyMin(patch.airBoost, 0.10, 0.16);
+    applyMin(patch.lowPunch, 0.14, 0.18);
+    applyMin(patch.wowFlutter, 0.05, 0.16);
+    applyMin(patch.vintageDrift, 0.20, 0.30);
+    applyMin(patch.chorusEnsemble, 0.10, 0.24);
+    patch.cutoff = std::clamp(std::max(patch.cutoff, 0.28 + t * 0.24), 0.0, 1.0);
+    patch.subOscillator = std::clamp(std::max(patch.subOscillator, 0.16 + t * 0.28), 0.0, 1.0);
+    patch.pan = std::clamp(patch.pan, -0.90, 0.90);
+    patch.chorusFeedback = std::clamp(std::max(patch.chorusFeedback, 0.06 + t * 0.22), 0.0, 0.60);
+    patch.chorusDelay = std::clamp(std::max(patch.chorusDelay, 0.12 + t * 0.24), 0.0, 1.0);
+    patch.chorusWidth = std::clamp(std::max(patch.chorusWidth, 0.36 + t * 0.20), 0.0, 1.0);
+    patch.delayDrive = std::clamp(std::max(patch.delayDrive, 0.02 + t * 0.14), 0.0, 1.0);
+    applyMin(patch.delayModDepth, 0.08, 0.14);
+    patch.delayStereo = std::clamp(std::max(patch.delayStereo, 0.10 + t * 0.20), 0.0, 1.0);
+    applyMin(patch.delayDucking, 0.04, 0.16);
+    patch.reverbDiffusion = std::clamp(std::max(patch.reverbDiffusion, 0.28 + t * 0.22), 0.0, 1.0);
+    patch.reverbWidth = std::clamp(std::max(patch.reverbWidth, 0.12 + t * 0.16), 0.0, 1.0);
+    patch.reverbModDepth = std::clamp(std::max(patch.reverbModDepth, 0.04 + t * 0.10), 0.0, 1.0);
+    patch.reverbShimmer = std::clamp(std::max(patch.reverbShimmer, 0.02 + t * 0.10), 0.0, 1.0);
+
+    if (isPercussive) {
+        patch.delayMix = std::clamp(std::max(patch.delayMix, 0.02 + t * 0.10), 0.0, 0.22);
+        patch.reverbMix = std::clamp(std::max(patch.reverbMix, 0.04 + t * 0.12), 0.0, 0.24);
+        patch.combMix = std::clamp(std::max(patch.combMix, 0.02 + t * 0.08), 0.0, 0.16);
+        patch.transientShape = std::clamp(std::max(patch.transientShape, 0.34 + t * 0.30), 0.0, 1.0);
+    } else {
+        patch.delayMix = std::clamp(std::max(patch.delayMix, 0.04 + t * 0.08), 0.0, 0.18);
+        patch.reverbMix = std::clamp(std::max(patch.reverbMix, 0.06 + t * 0.10), 0.0, 0.20);
+        patch.combMix = std::clamp(std::max(patch.combMix, 0.02 + t * 0.08), 0.0, 0.16);
+        if (patch.chorusEnabled) {
+            patch.chorusMix = std::clamp(std::max(patch.chorusMix, 0.04 + t * 0.08), 0.0, 0.26);
+        }
+    }
+
+    patch.gain = std::clamp(std::max(patch.gain, 0.06), 0.06, 0.80);
+    patch.drive = std::clamp(std::max(patch.drive, 0.04), 0.0, 0.66);
+    patch.wavefold = std::clamp(patch.wavefold, 0.0, 0.28);
+    patch.filterDrive = std::clamp(patch.filterDrive, 0.0, 0.72);
+    patch.filterEnvelope.decay = std::clamp(patch.filterEnvelope.decay, 0.001, 0.45);
+    patch.ampEnvelope.decay = std::clamp(patch.ampEnvelope.decay, 0.001, 0.70);
+    patch.hifiExciter = std::min(patch.hifiExciter, 0.16);
+    patch.outputTransformer = std::min(patch.outputTransformer, 0.24);
+    patch.outputSoftClip = std::min(patch.outputSoftClip, 0.18);
+    patch.outputGlue = std::min(patch.outputGlue, 0.26);
+    patch.toneTilt = std::clamp(patch.toneTilt, -0.9, 0.9);
+    patch.pitchEnvelopeSemitones = std::clamp(patch.pitchEnvelopeSemitones, -4.0, 4.0);
+    patch.pitchEnvelopeDecay = std::clamp(patch.pitchEnvelopeDecay, 0.0, 0.60);
+    patch.delayFeedback = std::clamp(patch.delayFeedback, 0.0, 0.72);
+    patch.delayTime = std::clamp(patch.delayTime, 0.0, 0.95);
+    patch.combFeedback = std::clamp(patch.combFeedback, 0.0, 0.56);
+    patch.reverbDecay = std::clamp(patch.reverbDecay, 0.0, 0.86);
+    patch.reverbDiffusion = std::clamp(patch.reverbDiffusion, 0.0, 0.86);
+    patch.delayDiffusion = std::clamp(patch.delayDiffusion, 0.0, 0.86);
+    patch.reverbWidth = std::clamp(patch.reverbWidth, 0.0, 0.72);
+    patch.outputTransformer = std::clamp(patch.outputTransformer, 0.0, 0.32);
+    patch.outputSoftClip = std::clamp(patch.outputSoftClip, 0.0, 0.24);
+    if (!patch.bitCrushEnabled) {
+        patch.bitCrush = 0.0;
+        patch.sampleRateReduction = 0.0;
+    } else {
+        patch.bitCrush = std::min(patch.bitCrush, 0.14);
+        patch.sampleRateReduction = std::min(patch.sampleRateReduction, 0.10);
+        if (patch.bitCrush <= 0.01 && patch.sampleRateReduction <= 0.01) {
+            patch.bitCrushEnabled = false;
+            patch.bitCrush = 0.0;
+            patch.sampleRateReduction = 0.0;
+        }
+    }
+    if (isPercussive) {
+        patch.delayWow = std::clamp(patch.delayWow, 0.0, 0.22);
+        patch.delayDiffusion = std::clamp(patch.delayDiffusion, 0.0, 0.70);
+        patch.reverbShimmer = std::clamp(patch.reverbShimmer, 0.0, 0.08);
+        patch.delayDrive = std::clamp(patch.delayDrive, 0.0, 0.12);
+        patch.delayModDepth = std::clamp(patch.delayModDepth, 0.0, 0.18);
+        patch.reverbModDepth = std::clamp(patch.reverbModDepth, 0.0, 0.18);
+        patch.outputSoftClip = std::min(patch.outputSoftClip, 0.16);
+        patch.outputTransformer = std::min(patch.outputTransformer, 0.30);
+        patch.delayFeedback = std::min(patch.delayFeedback, 0.56);
+        patch.ampEnvelope.attack = std::clamp(patch.ampEnvelope.attack, 0.0002, 0.006);
+        patch.ampEnvelope.decay = std::clamp(patch.ampEnvelope.decay, 0.001, 0.18);
+        patch.filterEnvelope.decay = std::clamp(patch.filterEnvelope.decay, 0.001, 0.16);
+    }
+    if (looksBass) {
+        patch.cutoff = std::clamp(std::max(patch.cutoff, 0.20 + t * 0.20), 0.0, 0.88);
+        patch.subOscillator = std::clamp(std::max(patch.subOscillator, 0.18 + t * 0.40), 0.0, 1.0);
+        patch.reverbMix = std::clamp(patch.reverbMix, 0.0, 0.18);
+        patch.delayMix = std::clamp(patch.delayMix, 0.0, 0.18);
+        patch.lowPunch = std::clamp(std::max(patch.lowPunch, 0.24 + t * 0.40), 0.0, 0.90);
+        patch.filterDrive = std::clamp(patch.filterDrive, 0.0, 0.82);
+        patch.resonance = std::clamp(patch.resonance, 0.0, 0.62);
+        patch.filterEnvelope.attack = std::clamp(patch.filterEnvelope.attack, 0.001, 0.16);
+        patch.ampEnvelope.attack = std::clamp(patch.ampEnvelope.attack, 0.0005, 0.08);
+        patch.ampEnvelope.release = std::clamp(patch.ampEnvelope.release, 0.02, 0.45);
+    }
+    if (looksLead) {
+        patch.delayMix = std::clamp(patch.delayMix, 0.0, 0.24);
+        patch.reverbMix = std::clamp(patch.reverbMix, 0.0, 0.22);
+        patch.hifiExciter = std::clamp(patch.hifiExciter, 0.02, 0.24);
+        patch.airBoost = std::clamp(patch.airBoost, 0.0, 0.24);
+        patch.chorusTone = std::clamp(patch.chorusTone, 0.0, 0.90);
+        patch.ampEnvelope.attack = std::clamp(patch.ampEnvelope.attack, 0.001, 0.12);
+        patch.filterEnvelope.attack = std::clamp(patch.filterEnvelope.attack, 0.001, 0.20);
+    }
+    patch.chorusSaturation = std::clamp(patch.chorusSaturation, 0.0, 0.28);
+    patch.delayModDepth = std::clamp(patch.delayModDepth, 0.0, 0.36);
+    patch.reverbModDepth = std::clamp(patch.reverbModDepth, 0.0, 0.30);
+    patch.reverbChorus = std::clamp(patch.reverbChorus, 0.0, 0.32);
+    patch.lowPunch = std::min(patch.lowPunch, 0.88);
+    patch.toneTilt = std::clamp(patch.toneTilt, -0.40, 0.45);
+    patch.airBoost = std::clamp(patch.airBoost, 0.0, 0.28);
+    patch.highPass = std::clamp(patch.highPass, 0.0, 0.34);
+    patch.click = std::clamp(patch.click, 0.0, 0.18);
+    patch.transientNoise = std::min(patch.transientNoise, 0.44);
 }
 
 } // namespace arachno

@@ -14,6 +14,11 @@ std::vector<int> filteredInstrumentIndicesForQuery(
     const AppSessionSnapshot& snapshot,
     const std::string& query);
 
+bool isStandardMidiBrowserIndex(int instrumentIndex);
+std::string standardMidiBrowserName(int instrumentIndex);
+std::string standardMidiBrowserCategory(int instrumentIndex);
+int standardMidiBrowserCount();
+
 struct GuiInstrumentBrowserOpenContext {
     bool& audioTuningDialogActive;
     bool& instrumentBrowserActive;

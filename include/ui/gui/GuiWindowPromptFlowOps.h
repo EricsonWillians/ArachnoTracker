@@ -36,6 +36,7 @@ struct GuiWindowPromptFlowFactoryInput {
     bool& midiImportSplitByTrack;
     AppActionResult& lastAction;
     bool& synthWindowNeedsRedraw;
+    std::function<void()> refreshSnapshot;
     double& targetSongLengthMinutes;
     int& activePatternRows;
     bool& keyboardSelectionActive;
@@ -79,6 +80,7 @@ struct GuiWindowPromptFlowContext {
     bool& midiImportSplitByTrack;
     AppActionResult& lastAction;
     bool& synthWindowNeedsRedraw;
+    std::function<void()> refreshSnapshot;
     double& targetSongLengthMinutes;
     int& activePatternRows;
     bool& keyboardSelectionActive;

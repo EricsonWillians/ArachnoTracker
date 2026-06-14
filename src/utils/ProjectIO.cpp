@@ -1,5 +1,7 @@
 #include "ProjectIO.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -10,6 +12,34 @@
 namespace arachno {
 
 namespace {
+constexpr double kCompetitionPresetQualityProject = 0.82;
+constexpr double kCompetitionPresetQualityPercussiveProject = 0.76;
+
+bool looksLikePercussivePatch(const std::string& name) {
+    std::string lowerName;
+    lowerName.reserve(name.size());
+    for (unsigned char c : name) {
+        lowerName.push_back(static_cast<char>(std::tolower(c)));
+    }
+    constexpr const char* kPercussiveTokens[] = {
+        "kick",
+        "snare",
+        "hat",
+        "clap",
+        "tom",
+        "ride",
+        "rim",
+        "cym",
+        "shaker",
+        "drum",
+        "perc",
+        "noisehit"};
+
+    return std::any_of(std::begin(kPercussiveTokens), std::end(kPercussiveTokens), [&](const char* token) {
+        return lowerName.find(token) != std::string::npos;
+    });
+}
+
 void expectToken(std::istream& in, const std::string& expected) {
     std::string token;
     in >> token;
@@ -673,6 +703,12 @@ Song loadProject(const std::string& path) {
         patch.hardSyncEnabled = hardSyncEnabled >= 0.5;
         patch.chorusEnabled = chorusEnabled >= 0.5;
         patch.bitCrushEnabled = bitCrushEnabled >= 0.5;
+        applyCompetitionPresetQuality(
+            patch,
+            looksLikePercussivePatch(patch.name)
+                ? kCompetitionPresetQualityPercussiveProject
+                : kCompetitionPresetQualityProject,
+            looksLikePercussivePatch(patch.name));
         song.instruments.push_back(instrument);
     }
 

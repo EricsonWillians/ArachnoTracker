@@ -334,6 +334,7 @@ int runGuiWindow(
             midiImportSplitByTrack,
             lastAction,
             synthWindowNeedsRedraw,
+            coreBindings.refreshSnapshot,
             targetSongLengthMinutes,
             activePatternRows,
             keyboardSelectionActive,

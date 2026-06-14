@@ -10,6 +10,21 @@
 
 namespace arachno {
 
+namespace {
+
+void ensureAtLeastOneInstrument(Song& song) {
+    if (!song.instruments.empty()) {
+        return;
+    }
+
+    Song bootstrap = makeBlankSong();
+    if (!bootstrap.instruments.empty()) {
+        song.instruments.push_back(bootstrap.instruments.front());
+    }
+}
+
+} // namespace
+
 ApplicationSession::ApplicationSession(Song song, int sampleRate, AppSettings settings)
     : playback_(sampleRate), settings_(std::move(settings)) {
     validateAppSettings(settings_);
@@ -687,6 +702,7 @@ std::uint64_t ApplicationSession::lastEventSequence() const {
 }
 
 void ApplicationSession::replaceSong(Song song, const std::string& projectPath, bool dirty) {
+    ensureAtLeastOneInstrument(song);
     song_ = std::move(song);
     editor_ = std::make_unique<PatternEditorSession>(song_);
     playback_.stop();
