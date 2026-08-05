@@ -727,6 +727,9 @@ Song makeDemoSong() {
     bass.combTime = 0.052;
     bass.combFeedback = 0.18;
     bass.gain = 0.62;
+    bass.portamentoTime = 0.025;
+    bass.portamentoLegato = true;
+    bass.monoMode = true;
     bass.ampEnvelope.attack = 0.002;
     bass.ampEnvelope.decay = 0.09;
     bass.ampEnvelope.sustain = 0.58;
@@ -823,6 +826,9 @@ Song makeDemoSong() {
     pad.voiceSlop = 0.42;
     pad.phaseScatter = 0.58;
     pad.chorusTone = 0.62;
+    pad.chorusEnsemble = 0.55;
+    pad.reverbMix = 0.22;
+    pad.reverbSize = 0.78;
     pad.delayDiffusion = 0.47;
     pad.reverbDecay = 0.86;
     pad.reverbEarlyMix = 0.37;
@@ -868,6 +874,8 @@ Song makeDemoSong() {
     kick.fmRatio = 1.5;
     kick.fmFeedback = 0.26;
     kick.fmAlgorithm = 1;
+    kick.fmDecay = 0.03;
+    kick.velocityToAttack = 0.35;
     kick.drive = 0.46;
     kick.wavefold = 0.08;
     kick.analogColor = 0.62;
@@ -897,6 +905,7 @@ Song makeDemoSong() {
     snare.fmEnabled = true;
     snare.fmFeedback = 0.3;
     snare.fmAlgorithm = 3;
+    snare.fmDecay = 0.05;
     snare.noise = 0.82;
     snare.noiseTone = 0.84;
     snare.click = 0.16;
@@ -933,7 +942,7 @@ Song makeDemoSong() {
     snare.outputGlue = 0.24;
     snare.bitCrushEnabled = true;
     snare.bitCrush = 0.04;
-    snare.gain = 0.56;
+    snare.gain = 0.62;
     snare.ampEnvelope.attack = 0.001;
     snare.ampEnvelope.decay = 0.082;
     snare.ampEnvelope.sustain = 0.0;
@@ -950,6 +959,7 @@ Song makeDemoSong() {
     hat.fmRatio = 6.0;
     hat.fmFeedback = 0.25;
     hat.fmAlgorithm = 3;
+    hat.fmDecay = 0.04;
     hat.chorusEnabled = true;
     hat.chorusMix = 0.08;
     hat.chorusRate = 0.9;
@@ -2194,6 +2204,114 @@ Song makeDemoSong() {
     acidScream.filterEnvelope.sustain = 0.12;
     acidScream.filterEnvelope.release = 0.06;
 
+    // Vintage Strings — lush 80s ensemble strings (Jupiter-style), sustains while held
+    SynthPatch vintageStrings = pad;
+    vintageStrings.name = "Vintage Strings";
+    vintageStrings.oscillatorA = Waveform::Saw;
+    vintageStrings.oscillatorB = Waveform::Triangle;
+    vintageStrings.oscillatorC = Waveform::Sine;
+    vintageStrings.oscillatorCEnabled = true;
+    vintageStrings.oscillatorDEnabled = false;
+    vintageStrings.oscillatorMix = 0.5;
+    vintageStrings.oscillatorCMix = 0.22;
+    vintageStrings.unisonVoices = 5;
+    vintageStrings.unisonDetuneCents = 8.0;
+    vintageStrings.stereoSpread = 0.55;
+    vintageStrings.chorusEnabled = true;
+    vintageStrings.chorusMix = 0.32;
+    vintageStrings.chorusRate = 0.18;
+    vintageStrings.chorusDepth = 0.42;
+    vintageStrings.chorusEnsemble = 0.38;
+    vintageStrings.cutoff = 0.48;
+    vintageStrings.resonance = 0.08;
+    vintageStrings.filterKeytrack = 0.25;
+    vintageStrings.filterEnvelopeAmount = 0.12;
+    vintageStrings.vibratoCents = 4.0;
+    vintageStrings.velocityToAmp = 0.48;
+    vintageStrings.reverbMix = 0.2;
+    vintageStrings.reverbSize = 0.72;
+    vintageStrings.reverbDiffusion = 0.62;
+    vintageStrings.gain = 0.38;
+    vintageStrings.ampEnvelope.attack = 0.09;
+    vintageStrings.ampEnvelope.decay = 0.25;
+    vintageStrings.ampEnvelope.sustain = 0.78;
+    vintageStrings.ampEnvelope.release = 0.55;
+    vintageStrings.filterEnvelope.attack = 0.12;
+    vintageStrings.filterEnvelope.decay = 0.3;
+    vintageStrings.filterEnvelope.sustain = 0.5;
+    vintageStrings.filterEnvelope.release = 0.4;
+
+    // Synth Strings '85 — brighter mid-80s digital-style synth strings, fast response
+    SynthPatch synthStrings85 = pad;
+    synthStrings85.name = "Synth Strings 85";
+    synthStrings85.oscillatorA = Waveform::Saw;
+    synthStrings85.oscillatorB = Waveform::Saw;
+    synthStrings85.oscillatorCEnabled = false;
+    synthStrings85.oscillatorDEnabled = false;
+    synthStrings85.oscillatorMix = 0.5;
+    synthStrings85.detuneCents = 9.0;
+    synthStrings85.unisonVoices = 4;
+    synthStrings85.unisonDetuneCents = 9.0;
+    synthStrings85.stereoSpread = 0.58;
+    synthStrings85.chorusEnabled = true;
+    synthStrings85.chorusMix = 0.3;
+    synthStrings85.chorusRate = 0.25;
+    synthStrings85.chorusDepth = 0.4;
+    synthStrings85.chorusEnsemble = 0.3;
+    synthStrings85.cutoff = 0.52;
+    synthStrings85.resonance = 0.12;
+    synthStrings85.filterEnvelopeAmount = 0.18;
+    synthStrings85.lfoFilterDepth = 0.12;
+    synthStrings85.lfoRate = 2.6;
+    synthStrings85.vibratoCents = 5.0;
+    synthStrings85.velocityToAmp = 0.45;
+    synthStrings85.reverbMix = 0.18;
+    synthStrings85.reverbSize = 0.66;
+    synthStrings85.gain = 0.4;
+    synthStrings85.ampEnvelope.attack = 0.035;
+    synthStrings85.ampEnvelope.decay = 0.22;
+    synthStrings85.ampEnvelope.sustain = 0.8;
+    synthStrings85.ampEnvelope.release = 0.45;
+    synthStrings85.filterEnvelope.attack = 0.05;
+    synthStrings85.filterEnvelope.decay = 0.3;
+    synthStrings85.filterEnvelope.sustain = 0.55;
+    synthStrings85.filterEnvelope.release = 0.35;
+
+    // Analog String Machine — Solina-style string synth: slow swell, deep ensemble chorus
+    SynthPatch analogStringMachine = pad;
+    analogStringMachine.name = "Analog String Machine";
+    analogStringMachine.oscillatorA = Waveform::Saw;
+    analogStringMachine.oscillatorB = Waveform::Square;
+    analogStringMachine.oscillatorC = Waveform::Saw;
+    analogStringMachine.oscillatorCEnabled = true;
+    analogStringMachine.oscillatorDEnabled = false;
+    analogStringMachine.oscillatorMix = 0.55;
+    analogStringMachine.oscillatorCMix = 0.3;
+    analogStringMachine.unisonVoices = 6;
+    analogStringMachine.unisonDetuneCents = 12.0;
+    analogStringMachine.stereoSpread = 0.68;
+    analogStringMachine.chorusEnabled = true;
+    analogStringMachine.chorusMix = 0.5;
+    analogStringMachine.chorusRate = 0.14;
+    analogStringMachine.chorusDepth = 0.6;
+    analogStringMachine.chorusEnsemble = 0.55;
+    analogStringMachine.cutoff = 0.44;
+    analogStringMachine.resonance = 0.06;
+    analogStringMachine.filterEnvelopeAmount = 0.1;
+    analogStringMachine.vibratoCents = 2.5;
+    analogStringMachine.velocityToAmp = 0.35;
+    analogStringMachine.reverbMix = 0.24;
+    analogStringMachine.reverbSize = 0.8;
+    analogStringMachine.gain = 0.34;
+    analogStringMachine.ampEnvelope.attack = 0.3;
+    analogStringMachine.ampEnvelope.decay = 0.4;
+    analogStringMachine.ampEnvelope.sustain = 0.9;
+    analogStringMachine.ampEnvelope.release = 0.8;
+    analogStringMachine.filterEnvelope.attack = 0.35;
+    analogStringMachine.filterEnvelope.decay = 0.5;
+    analogStringMachine.filterEnvelope.sustain = 0.6;
+    analogStringMachine.filterEnvelope.release = 0.6;
+
     // Apply polish to all new patches
     applyVintageHiFiPolish(bass, kCompetitionPresetPolishSub, false);
     applyVintageHiFiPolish(kick, kCompetitionPresetPolishPercussive, true);
@@ -2230,6 +2348,9 @@ Song makeDemoSong() {
     applyVintageHiFiPolish(fmBass, kCompetitionPresetPolishMelodic, false);
     applyVintageHiFiPolish(reeseDark, kCompetitionPresetPolishMelodic, false);
     applyVintageHiFiPolish(acidScream, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(vintageStrings, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(synthStrings85, kCompetitionPresetPolishMelodic, false);
+    applyVintageHiFiPolish(analogStringMachine, kCompetitionPresetPolishMelodic, false);
     applyGenreBalance(bass);
     applyGenreBalance(kick);
     applyGenreBalance(snare);
@@ -2265,6 +2386,9 @@ Song makeDemoSong() {
     applyGenreBalance(fmBass);
     applyGenreBalance(reeseDark);
     applyGenreBalance(acidScream);
+    applyGenreBalance(vintageStrings);
+    applyGenreBalance(synthStrings85);
+    applyGenreBalance(analogStringMachine);
 
     const int bassInstrument = tracker.addInstrument(bass);
     const int kickInstrument = tracker.addInstrument(kick);
@@ -2301,6 +2425,9 @@ Song makeDemoSong() {
     tracker.addInstrument(fmBass);
     tracker.addInstrument(reeseDark);
     tracker.addInstrument(acidScream);
+    tracker.addInstrument(vintageStrings);
+    tracker.addInstrument(synthStrings85);
+    tracker.addInstrument(analogStringMachine);
 
     Pattern pattern = buildOpeningPattern(
         static_cast<int>(tracker.song().tracks.size()),

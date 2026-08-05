@@ -147,7 +147,7 @@ bool handleSynthWindowClick(const GuiSynthClickContext& context) {
                 context.synthKeyboardBaseOctave + 1);
         } else if (hit.kind == "kb_octave_sync") {
             context.synthKeyboardBaseOctave = std::clamp(
-                context.armedOctave - 1,
+                context.armedOctave,
                 0,
                 std::max(0, 10 - context.synthKeyboardVisibleOctaves));
         } else if (hit.kind == "param_page") {

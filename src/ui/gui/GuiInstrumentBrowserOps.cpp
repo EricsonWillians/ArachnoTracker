@@ -39,6 +39,53 @@ const std::array<StandardMidiEntry, 16> kStandardMidiEntries {
     {kStandardMidiVirtualBase + 14, "Reverse Cymbal", "Standard MIDI / Drums"},
     {kStandardMidiVirtualBase + 15, "Choir Aahs", "Standard MIDI / Vocals"}};
 
+std::string canonicalBrowserName(const std::string& name) {
+    const std::string lowered = lowerCopy(trimCopy(name));
+    std::string value;
+    value.reserve(lowered.size());
+    for (char ch : lowered) {
+        if (std::isalnum(static_cast<unsigned char>(ch)) || std::isspace(static_cast<unsigned char>(ch))) {
+            value.push_back(ch);
+        }
+    }
+    return value;
+}
+
+std::string canonicalBrowserNameCompact(const std::string& name) {
+    std::string canonical = canonicalBrowserName(name);
+    canonical.erase(std::remove_if(canonical.begin(), canonical.end(), [](unsigned char ch) {
+        return std::isspace(ch);
+    }),
+    canonical.end());
+    return canonical;
+}
+
+int matchedProjectInstrumentIndex(const AppSessionSnapshot& snapshot, const std::string& standardName) {
+    const std::string normalized = canonicalBrowserName(standardName);
+    const std::string normalizedCompact = canonicalBrowserNameCompact(standardName);
+    if (normalized.empty()) {
+        return -1;
+    }
+    for (std::size_t index = 0; index < snapshot.editor.instruments.size(); ++index) {
+        const InstrumentSummary& instrument = snapshot.editor.instruments[index];
+        const std::string canonicalName = canonicalBrowserName(instrument.name);
+        if (canonicalName == normalized) {
+            return static_cast<int>(index);
+        }
+        if (canonicalBrowserNameCompact(canonicalName) == normalizedCompact) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
+struct IndexedMatch {
+    std::string sortKey;
+    int instrumentIndex;
+};
+
+} // namespace
+
 std::string instrumentCategoryFromName(const std::string& name) {
     const std::string lowered = lowerCopy(name);
     auto token = [&](const std::string& value) {
@@ -53,24 +100,23 @@ std::string instrumentCategoryFromName(const std::string& name) {
     if (token("lead") || token("solo") || token("arp") || token("pluck")) {
         return "Lead";
     }
-    if (token("pad") || token("drone") || token("stabs") || token("soundscape")) {
+    if (token("pad") || token("drone") || token("stabs") || token("soundscape") || token("choir") || token("bell")) {
         return "Pads";
     }
-    if (token("pad") || token("choir") || token("bell")) {
-        return "Pads";
-    }
-    if (token("clap") || token("ride") || token("shaker") || token("noise")) {
+    if (token("clap") || token("shaker") || token("noise")) {
         return "FX";
+    }
+    if (token("guitar")) {
+        return "Guitar";
+    }
+    if (token("string") || token("violin") || token("viola") || token("cello") || token("orchestra")) {
+        return "Strings";
+    }
+    if (token("brass") || token("trumpet") || token("sax") || token("horn")) {
+        return "Brass";
     }
     return "MIDI";
 }
-
-struct IndexedMatch {
-    std::string sortKey;
-    int instrumentIndex;
-};
-
-} // namespace
 
 std::vector<int> filteredInstrumentIndicesForQuery(
     const AppSessionSnapshot& snapshot,
@@ -79,23 +125,29 @@ std::vector<int> filteredInstrumentIndicesForQuery(
     const std::string normalizedQuery = lowerCopy(trimCopy(query));
     const std::size_t expectedSize = snapshot.editor.instruments.size() + kStandardMidiEntries.size();
     entries.reserve(expectedSize);
-    for (const InstrumentSummary& instrument : snapshot.editor.instruments) {
-        const std::string indexToken = std::to_string(instrument.index);
+    for (std::size_t index = 0; index < snapshot.editor.instruments.size(); ++index) {
+        const InstrumentSummary& instrument = snapshot.editor.instruments[index];
+        const std::string indexToken = std::to_string(static_cast<int>(index));
         const bool match = normalizedQuery.empty()
             || lowerCopy(instrument.name).find(normalizedQuery) != std::string::npos
             || indexToken.find(normalizedQuery) != std::string::npos;
         if (match) {
-            entries.push_back({"Project > " + instrumentCategoryFromName(instrument.name) + " | " + lowerCopy(instrument.name), instrument.index});
+            entries.push_back({"project|"
+                               + instrumentCategoryFromName(instrument.name) + "|" + lowerCopy(instrument.name),
+                               static_cast<int>(index)});
         }
     }
     for (const StandardMidiEntry& entry : kStandardMidiEntries) {
         const std::string lowerName = lowerCopy(entry.name);
+        if (matchedProjectInstrumentIndex(snapshot, entry.name) >= 0) {
+            continue;
+        }
         const std::string category = lowerCopy(entry.category);
         const bool match = normalizedQuery.empty()
             || lowerName.find(normalizedQuery) != std::string::npos
             || category.find(normalizedQuery) != std::string::npos;
         if (match) {
-            entries.push_back({"" + std::string(category) + " | " + lowerName, entry.virtualIndex});
+            entries.push_back({"standard|" + category + "|" + lowerName, entry.virtualIndex});
         }
     }
     std::sort(entries.begin(), entries.end(), [](const IndexedMatch& left, const IndexedMatch& right) {
@@ -161,9 +213,7 @@ void closeInstrumentBrowser(const GuiInstrumentBrowserCloseContext& context, boo
                 0,
                 static_cast<int>(indices.size()) - 1);
             const int instrumentIndex = indices[static_cast<std::size_t>(row)];
-            if (!isStandardMidiBrowserIndex(instrumentIndex)) {
-                context.selectInstrument(instrumentIndex);
-            }
+            context.selectInstrument(instrumentIndex);
         }
     }
     context.instrumentBrowserActive = false;

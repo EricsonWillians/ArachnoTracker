@@ -76,6 +76,12 @@ GuiMainSidebarClickResult handleMainSidebarLeftClick(const GuiMainSidebarClickCo
         result.needsRedraw = true;
         return result;
     }
+    if (context.legatoButton.contains(context.mx, context.my)) {
+        context.toggleLegatoInput();
+        result.consumed = true;
+        result.needsRedraw = true;
+        return result;
+    }
     if (context.followPlaybackButton.contains(context.mx, context.my)) {
         context.followPlayback = !context.followPlayback;
         result.consumed = true;

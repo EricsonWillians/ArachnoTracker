@@ -9,7 +9,7 @@
 
 namespace arachno {
 
-constexpr int appSettingsFileVersion = 4;
+constexpr int appSettingsFileVersion = 5;
 
 struct ExportPreferences {
     std::string defaultDirectory;
@@ -43,11 +43,17 @@ struct SyncCheckpoint {
     std::string projectFingerprint;
 };
 
+struct BrowserPreferences {
+    // Last directory used by the patch file browser; restored on next launch.
+    std::string lastPatchDirectory;
+};
+
 struct AppSettings {
     std::vector<std::string> recentProjects;
     ExportPreferences exportDefaults;
     UiLayoutPreferences layout;
     AudioRuntimePreferences audioRuntime;
+    BrowserPreferences browser;
     std::vector<ShortcutBinding> shortcutOverrides;
     std::vector<SyncCheckpoint> syncCheckpoints;
 };

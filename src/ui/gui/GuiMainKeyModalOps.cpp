@@ -14,13 +14,16 @@ GuiMainKeyModalResult handleMainKeyModal(const GuiMainKeyModalContext& context) 
 
     if (context.unsavedPromptActive) {
         const KeySym normalized = normalizeLetterKey(context.key);
-        if (normalized == XK_s) {
+        if (normalized == XK_s || context.keyMatches(XK_Return) || context.keyMatches(XK_KP_Enter)) {
+            // Enter confirms the safe default (Save), like a standard dialog.
             context.resolveUnsavedPrompt(UnsavedChangesChoice::Save);
         } else if (normalized == XK_d) {
             context.resolveUnsavedPrompt(UnsavedChangesChoice::Discard);
-        } else {
+        } else if (context.key == XK_Escape) {
             context.resolveUnsavedPrompt(UnsavedChangesChoice::Cancel);
         }
+        // Any other key is ignored: the dialog must stay open instead of
+        // silently cancelling the pending project lifecycle action.
         result.consumed = true;
         result.needsRedraw = true;
         return result;
@@ -113,6 +116,35 @@ GuiMainKeyModalResult handleMainKeyModal(const GuiMainKeyModalContext& context) 
                 }
                 const FileBrowserEntry& entry = context.fileBrowserEntries[static_cast<std::size_t>(context.fileBrowserSelected)];
                 context.inlinePrompt.value = entry.path.string();
+            }
+            consumed = true;
+        } else if (browserMode
+            && (context.keyMatches(XK_Page_Up) || context.keyMatches(XK_KP_Page_Up)
+                || context.keyMatches(XK_Page_Down) || context.keyMatches(XK_KP_Page_Down)
+                || context.key == XK_Home || context.key == XK_End)) {
+            if (context.fileBrowserEntries.empty()) {
+                context.refreshFileBrowserEntries();
+            }
+            if (!context.fileBrowserEntries.empty()) {
+                const int last = static_cast<int>(context.fileBrowserEntries.size()) - 1;
+                const int visibleRows = std::max(1, (context.fileBrowserListRect.height - 4) / 18);
+                const int current = std::clamp(context.fileBrowserSelected, 0, last);
+                if (context.key == XK_Home) {
+                    context.fileBrowserSelected = 0;
+                } else if (context.key == XK_End) {
+                    context.fileBrowserSelected = last;
+                } else if (context.keyMatches(XK_Page_Up) || context.keyMatches(XK_KP_Page_Up)) {
+                    context.fileBrowserSelected = std::max(0, current - visibleRows);
+                } else {
+                    context.fileBrowserSelected = std::min(last, current + visibleRows);
+                }
+                if (context.fileBrowserSelected < context.fileBrowserScroll) {
+                    context.fileBrowserScroll = context.fileBrowserSelected;
+                }
+                if (context.fileBrowserSelected >= context.fileBrowserScroll + visibleRows) {
+                    context.fileBrowserScroll = std::max(0, context.fileBrowserSelected - visibleRows + 1);
+                }
+                context.inlinePrompt.value = context.fileBrowserEntries[static_cast<std::size_t>(context.fileBrowserSelected)].path.string();
             }
             consumed = true;
         } else if (context.keyMatches(XK_BackSpace)) {

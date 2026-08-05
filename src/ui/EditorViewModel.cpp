@@ -183,6 +183,7 @@ EditorViewModel buildEditorViewModel(
     model.status.selectionTracks = selection.trackCount;
     model.status.canUndo = editor.canUndo();
     model.status.canRedo = editor.canRedo();
+    model.status.legatoInput = editor.legatoInputEnabled();
 
     const std::vector<int> orderUseCounts = countPatternOrderUses(song);
     model.patterns.reserve(song.patterns.size());

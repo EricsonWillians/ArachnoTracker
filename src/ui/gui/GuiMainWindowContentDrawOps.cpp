@@ -169,6 +169,7 @@ void drawMainWindowContent(const GuiMainWindowContentDrawContext& context) {
             context.patternRowsValue,
             context.patternRowsPlus,
             context.stepAdvanceButton,
+            context.legatoButton,
             context.followPlaybackButton,
             context.trackMetadataHits,
             context.songLengthHits,

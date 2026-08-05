@@ -11,7 +11,8 @@ int clampSynthKeyboardBaseOctave(int baseOctave, int visibleOctaves) {
 
 int synthKeyboardBaseForMidi(int currentBaseOctave, int visibleOctaves, int midiNote) {
     const int clampedNote = std::clamp(midiNote, 0, 127);
-    const int noteOctave = clampedNote / 12;
+    // Keyboard base octave B displays/sounds keys starting at (B + 1) * 12.
+    const int noteOctave = std::max(0, (clampedNote / 12) - 1);
     int base = clampSynthKeyboardBaseOctave(currentBaseOctave, visibleOctaves);
     if (noteOctave < base || noteOctave >= base + std::max(1, visibleOctaves)) {
         base = noteOctave - (std::max(1, visibleOctaves) / 2);
@@ -56,7 +57,8 @@ AppActionResult auditionArmedInstrumentNote(
     int midiNote,
     float velocity,
     double gateSeconds,
-    const std::string& actionId) {
+    const std::string& actionId,
+    bool sustainUntilNoteOff) {
     AppActionResult out;
     const AppSessionSnapshot snap = session.snapshot(0, 1);
     const int count = static_cast<int>(snap.editor.instruments.size());
@@ -71,7 +73,8 @@ AppActionResult auditionArmedInstrumentNote(
         armedInstrument,
         std::clamp(midiNote, 0, 127),
         std::clamp(velocity, 0.02f, 1.0f),
-        std::max(0.03, gateSeconds));
+        std::max(0.03, gateSeconds),
+        sustainUntilNoteOff);
     out.ok = audition.ok;
     out.actionId = actionId;
     out.message = audition.message;
@@ -85,7 +88,8 @@ AppActionResult auditionCurrentSynthPatchNote(
     int midiNote,
     float velocity,
     double gateSeconds,
-    const std::string& actionId) {
+    const std::string& actionId,
+    bool sustainUntilNoteOff) {
     AppActionResult out;
     const int instrumentCount = static_cast<int>(session.song().instruments.size());
     const int instrument = instrumentCount <= 0 ? -1 : std::clamp(armedInstrument, 0, instrumentCount - 1);
@@ -101,7 +105,8 @@ AppActionResult auditionCurrentSynthPatchNote(
         std::clamp(midiNote, 0, 127),
         std::clamp(velocity, 0.02f, 1.0f),
         std::max(0.03, gateSeconds),
-        0.0);
+        0.0,
+        sustainUntilNoteOff);
     out.ok = audition.ok;
     out.actionId = actionId;
     out.message = audition.message;

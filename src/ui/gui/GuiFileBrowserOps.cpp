@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <system_error>
 
 namespace arachno {
@@ -26,6 +27,18 @@ bool inlinePromptKindUsesFileBrowser(InlinePromptKind kind) {
         || kind == InlinePromptKind::ImportPatchReplacePath
         || kind == InlinePromptKind::ImportPatchReplaceAllPath
         || kind == InlinePromptKind::ExportPatchPath;
+}
+
+bool inlinePromptKindIsPatch(InlinePromptKind kind) {
+    return kind == InlinePromptKind::ImportPatchAsNewPath
+        || kind == InlinePromptKind::ImportPatchReplacePath
+        || kind == InlinePromptKind::ImportPatchReplaceAllPath
+        || kind == InlinePromptKind::ExportPatchPath;
+}
+
+bool inlinePromptKindPreviewsPatchFile(InlinePromptKind kind) {
+    return kind == InlinePromptKind::ImportPatchAsNewPath
+        || kind == InlinePromptKind::ImportPatchReplacePath;
 }
 
 std::vector<std::string> fileBrowserExtensionFilter(InlinePromptKind kind) {
@@ -146,6 +159,26 @@ void initFileBrowserFromPrompt(const GuiFileBrowserState& state) {
             break;
         }
     }
+}
+
+bool fileBrowserRegisterClickForDoubleClick(int entryIndex, int windowMs) {
+    static int lastIndex = -1;
+    static std::chrono::steady_clock::time_point lastTime {};
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    const long long elapsedMs = lastIndex >= 0
+        ? std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count()
+        : windowMs + 1;
+    const bool isDouble = entryIndex >= 0
+        && entryIndex == lastIndex
+        && elapsedMs <= windowMs;
+    lastIndex = entryIndex;
+    lastTime = now;
+    if (isDouble) {
+        // Consume the streak so a third click starts fresh.
+        lastIndex = -1;
+        lastTime = std::chrono::steady_clock::time_point {};
+    }
+    return isDouble;
 }
 
 } // namespace arachno

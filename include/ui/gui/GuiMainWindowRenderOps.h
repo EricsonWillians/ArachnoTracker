@@ -108,6 +108,7 @@ struct GuiMainWindowRenderContext {
     UiRect& orderAppendButton;
     UiRect& orderDeleteButton;
     UiRect& stepAdvanceButton;
+    UiRect& legatoButton;
     UiRect& followPlaybackButton;
     UiRect& instrumentListRect;
     UiRect& instrumentBrowserListRect;

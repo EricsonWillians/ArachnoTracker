@@ -16,7 +16,7 @@ struct EffectCommand {
 
 struct PatternStep {
     std::optional<Note> note;
-    int instrument = 0;
+    int instrument = -1;
     double gate = 0.88;
     double microOffsetRows = 0.0;
     std::optional<double> probability;
@@ -25,8 +25,10 @@ struct PatternStep {
     double retriggerVelocityDecay = 0.85;
     std::map<std::string, double> automation;
     std::vector<EffectCommand> effects;
+    // Note-off step: releases the last note started on this track (rendered as "===").
+    bool noteOff = false;
 
-    bool empty() const { return !note.has_value() && automation.empty() && effects.empty(); }
+    bool empty() const { return !note.has_value() && !noteOff && automation.empty() && effects.empty(); }
 };
 
 } // namespace arachno

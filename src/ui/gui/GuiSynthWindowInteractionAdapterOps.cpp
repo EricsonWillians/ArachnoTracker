@@ -7,6 +7,10 @@ bool triggerSynthKeyboardPointerFromWindowState(
     int mx,
     int my,
     bool allowRetrigger) {
+    // End the previously sustained pointer key before starting the next one (glissando).
+    if (context.synthLastPointerMidi >= 0) {
+        context.session.playback().auditionNoteOff(context.synthLastPointerMidi, -1);
+    }
     return triggerSynthKeyboardPointer(
         context.synthKeyboardHits,
         mx,
@@ -71,6 +75,9 @@ bool pollSynthMidiInputFromWindowState(const GuiSynthWindowInteractionAdapterCon
         context.synthMidiPreviewHeld,
         context.synthWindowVisible,
         context.auditionSynthPreviewMidiVelocity,
+        [&session = context.session](int midiNote) {
+            session.playback().auditionNoteOff(midiNote, -1);
+        },
         context.synthWindowNeedsRedraw);
 }
 
@@ -157,6 +164,7 @@ GuiSynthWindowEventContext makeSynthWindowEventContextFromWindowState(
             },
             [&](int x, int y) { return handleSynthWindowClickFromWindowState(context, x, y); },
             context.refreshSnapshot,
+            [&session = context.session](int midiNote) { session.playback().auditionNoteOff(midiNote, -1); },
             context.clampInstrumentIndex,
             context.findSynthParamDef,
             context.setSynthParameterWithRefresh,

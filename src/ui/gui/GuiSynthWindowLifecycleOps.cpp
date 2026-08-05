@@ -133,11 +133,11 @@ void setSynthWindowVisible(const GuiSynthWindowLifecycleContext& context, bool v
         context.synthTooltipHoverSince = std::chrono::steady_clock::time_point {};
         context.synthScopeRetriggerRequested = true;
         context.synthKeyboardBaseOctave = std::clamp(
-            context.armedOctave - 1,
+            context.armedOctave,
             0,
             std::max(0, 10 - context.synthKeyboardVisibleOctaves));
         context.synthPreviewMidi =
-            std::clamp((context.armedOctave * 12) + (context.synthPreviewMidi % 12), 0, 127);
+            std::clamp(((context.armedOctave + 1) * 12) + (context.synthPreviewMidi % 12), 0, 127);
         context.paintNoteMidi = context.synthPreviewMidi;
         context.synthWindowNeedsRedraw = true;
         return;

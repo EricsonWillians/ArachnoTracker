@@ -148,6 +148,7 @@ struct GuiSynthWindowEventContextFactoryInput {
     std::function<bool(int, int, bool)> triggerSynthKeyboardPointer;
     std::function<bool(int, int)> handleSynthWindowClick;
     std::function<void()> refreshSnapshot;
+    std::function<void(int)> noteOffSynthPreviewMidi;
 
     std::function<int()> clampInstrumentIndex;
     std::function<const SynthParamDef*(const std::string&)> findSynthParamDef;

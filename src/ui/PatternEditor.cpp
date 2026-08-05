@@ -124,6 +124,7 @@ bool commandMutatesProject(const std::string& verb) {
         && verb != "right"
         && verb != "select"
         && verb != "copy"
+        && verb != "legato"
         && verb != "undo"
         && verb != "redo";
 }
@@ -257,9 +258,56 @@ void PatternEditorSession::redo() {
 void PatternEditorSession::enterNote(const Note& note, float velocity) {
     PatternStep& step = activeStep();
     step.note = Note(note.midi, velocity);
+    step.noteOff = false;
     if (step.instrument < 0 && !song_.instruments.empty()) {
         step.instrument = 0;
     }
+    applyLegatoGate(step);
+}
+
+void PatternEditorSession::enterNote(const Note& note, int instrument, float velocity) {
+    PatternStep& step = activeStep();
+    step.note = Note(note.midi, velocity);
+    step.noteOff = false;
+    applyLegatoGate(step);
+    if (song_.instruments.empty()) {
+        return;
+    }
+    try {
+        setInstrument(instrument);
+    } catch (const std::out_of_range&) {
+        setInstrument(std::clamp(instrument, 0, static_cast<int>(song_.instruments.size()) - 1));
+    }
+}
+
+void PatternEditorSession::setLegatoInput(bool enabled) {
+    legatoInput_ = enabled;
+}
+
+void PatternEditorSession::applyLegatoGate(PatternStep& step) {
+    if (!legatoInput_ || !step.note.has_value()) {
+        return;
+    }
+    // Sustain until the next note or note-off step on this track; when nothing
+    // follows, sustain to the end of the pattern. Edit-time gate fill only.
+    const Pattern& pattern = activePattern();
+    const int rowCount = pattern.rowCount();
+    int endRow = rowCount;
+    for (int row = cursor_.row + 1; row < rowCount; ++row) {
+        const PatternStep& following = pattern.step(row, cursor_.track);
+        if (following.note.has_value() || following.noteOff) {
+            endRow = row;
+            break;
+        }
+    }
+    step.gate = std::max(1, endRow - cursor_.row);
+}
+
+void PatternEditorSession::enterNoteOff() {
+    PatternStep& step = activeStep();
+    step.note.reset();
+    step.effects.clear();
+    step.noteOff = true;
 }
 
 void PatternEditorSession::clearStep() {
@@ -990,7 +1038,33 @@ std::string PatternEditorSession::applyCommand(const std::string& command) {
             throw std::invalid_argument("note command requires a note name");
         }
         const double velocity = readOptionalDouble(in, 1.0);
-        enterNote(Note(noteNameToMidi(noteName), static_cast<float>(velocity)), static_cast<float>(velocity));
+        const int requestedInstrument = readOptionalInt(in, -1);
+        const int armedInstrument = activeStep().instrument;
+        if (requestedInstrument >= 0 || armedInstrument >= 0 || !song_.instruments.empty()) {
+            const int instrument = requestedInstrument >= 0
+                ? requestedInstrument
+                : (armedInstrument >= 0 ? armedInstrument : 0);
+            enterNote(
+                Note(noteNameToMidi(noteName), static_cast<float>(velocity)),
+                instrument,
+                static_cast<float>(velocity));
+        } else {
+            enterNote(Note(noteNameToMidi(noteName), static_cast<float>(velocity)), static_cast<float>(velocity));
+        }
+    } else if (verb == "noteoff" || verb == "note-off" || verb == "release") {
+        enterNoteOff();
+    } else if (verb == "legato") {
+        std::string mode;
+        in >> mode;
+        if (mode.empty() || mode == "toggle") {
+            setLegatoInput(!legatoInputEnabled());
+        } else if (mode == "on") {
+            setLegatoInput(true);
+        } else if (mode == "off") {
+            setLegatoInput(false);
+        } else {
+            throw std::invalid_argument("legato expects on, off, or toggle");
+        }
     } else if (verb == "clear" || verb == "rest") {
         clearStep();
     } else if (verb == "instrument" || verb == "inst") {

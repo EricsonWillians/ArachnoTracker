@@ -217,6 +217,7 @@ void saveAppSettings(const AppSettings& settings, const std::string& path) {
             << std::quoted(checkpoint.projectFingerprint)
             << "\n";
     }
+    out << "last_patch_dir " << std::quoted(settings.browser.lastPatchDirectory) << "\n";
     out << "end_settings\n";
 }
 
@@ -348,6 +349,12 @@ AppSettings loadAppSettings(const std::string& path) {
         }
     } else {
         settings.syncCheckpoints.clear();
+    }
+
+    if (version >= 5) {
+        ++line;
+        in >> key >> std::quoted(settings.browser.lastPatchDirectory);
+        expectKey(key, "last_patch_dir", line);
     }
 
     ++line;

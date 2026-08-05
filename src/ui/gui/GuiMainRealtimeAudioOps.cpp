@@ -27,10 +27,26 @@ void processMainRealtimeAudio(const GuiMainRealtimeAudioContext& context) {
     }
 
     if (shouldStreamAudio) {
-        if (streamStarting) {
-            context.audioPendingFrames = 0.0;
+        if (!context.audioProducerActive) {
+            // Inline fallback: render on the GUI thread only when no dedicated
+            // producer thread is running (producer startup failed).
+            (void)renderMainRealtimeAudioBlocks(context);
         }
-        context.tuneRealtimeAudioForLoad(playback.sampleRate);
+    } else {
+        context.lastPlaybackTick = std::chrono::steady_clock::now();
+        context.audioPendingFrames = 0.0;
+    }
+    context.previousAudioStreamActive = shouldStreamAudio;
+}
+
+int renderMainRealtimeAudioBlocks(const GuiMainRealtimeAudioContext& context) {
+    const PlaybackSnapshot playback = context.session.playback().snapshot();
+    const bool streamStarting = !context.previousAudioStreamActive;
+    const bool hasLiveOutput = context.audioRuntime.hasOutput();
+    if (streamStarting) {
+        context.audioPendingFrames = 0.0;
+    }
+    context.tuneRealtimeAudioForLoad(playback.sampleRate);
         if (context.audioRuntime.performanceMode() == AudioPerformanceMode::Auto) {
             const int outputPressure = hasLiveOutput ? context.audioRuntime.outputPressureLevel() : 0;
             int pressureTrackEstimate = 0;
@@ -195,7 +211,11 @@ void processMainRealtimeAudio(const GuiMainRealtimeAudioContext& context) {
         const int preferredChunkFrames = std::clamp(
             minFrames * (queueStarved ? (criticalPressure ? 8 : 6) : (highPressure ? 4 : 3)),
             minFrames,
-            std::min(maxFrames, queueStarved ? 4096 : 2048));
+            // Cap per-block frames so a single render call (which holds the
+            // audio-state mutex for its whole duration) stays bounded —
+            // 4096-frame blocks meant up to ~85 ms of note-on latency for
+            // keyboard/MIDI audition under load.
+            std::min(maxFrames, queueStarved ? 2048 : 1024));
         const auto maxTickRenderBudget = queueStarved
             ? std::chrono::milliseconds(criticalPressure ? 16 : 12)
             : std::chrono::milliseconds(highPressure ? 8 : 6);
@@ -290,12 +310,9 @@ void processMainRealtimeAudio(const GuiMainRealtimeAudioContext& context) {
                 break;
             }
         }
-        context.lastPlaybackTick = nowTick;
-    } else {
-        context.lastPlaybackTick = std::chrono::steady_clock::now();
-        context.audioPendingFrames = 0.0;
-    }
-    context.previousAudioStreamActive = shouldStreamAudio;
+    context.lastPlaybackTick = nowTick;
+    context.previousAudioStreamActive = true;
+    return framesRenderedThisTick;
 }
 
 } // namespace arachno

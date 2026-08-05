@@ -177,6 +177,31 @@ struct SynthPatch {
     // Envelope curve (Phase 4)
     int ampEnvelopeCurve = 0;          // 0=exponential, 1=linear, 2=log, 3=analog-RC
     int filterEnvelopeCurve = 0;       // same curves for filter envelope
+    // Portamento / glide (appended fields; serialized after filterEnvelopeCurve)
+    double portamentoTime = 0.0;       // seconds of pitch glide between notes; 0 = off
+    bool portamentoLegato = false;     // when true, glide only between overlapping notes
+    // FM expression (appended fields; serialized after portamentoLegato)
+    double fmDecay = 0.0;              // seconds for FM depth to decay to zero; 0 = constant
+    double velocityToFm = 0.0;         // depth of velocity→FM amount (DX7-style dynamics)
+    // Mono mode (classic monosynth): a new note steals all previous voices of the
+    // same instrument+channel with a fast fade, so only one note sounds at a time.
+    bool monoMode = false;
+    // Layered timbre (appended fields; serialized after monoMode).
+    // Per-osc frequency multipliers (x note frequency): EP tine clang, piano
+    // stretched partials, metallic layers. FM operator phases derive from the
+    // same oscillator phases, so ratios shift FM operator frequencies too.
+    double oscBRatio = 1.0;
+    double oscCRatio = 1.0;
+    double oscDRatio = 1.0;
+    // Per-osc 1-pole decay layers (seconds to decay to zero; 0 = constant).
+    // Gives piano/EP the fast-clang + slow-body two-layer envelope structure.
+    double oscBDecay = 0.0;
+    double oscCDecay = 0.0;
+    double oscDDecay = 0.0;
+    // Dynamics: velocity→amp decay time (harder strike rings longer) and
+    // key→amp decay time (low notes ring longer than high notes).
+    double velocityToDecay = 0.0;
+    double keyTrackDecay = 0.0;
 };
 
 struct Instrument {

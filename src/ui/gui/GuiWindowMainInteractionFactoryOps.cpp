@@ -121,6 +121,7 @@ GuiMainWindowInteractionAdapterContext makeMainInteractionContextFromWindowState
         input.patternRowsPlus,
         input.patternRowsValue,
         input.stepAdvanceButton,
+        input.legatoButton,
         input.followPlaybackButton,
         input.activeSnapshot,
         input.instrumentBindings.scrollInstrumentList,

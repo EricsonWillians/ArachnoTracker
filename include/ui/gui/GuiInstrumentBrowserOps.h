@@ -19,6 +19,9 @@ std::string standardMidiBrowserName(int instrumentIndex);
 std::string standardMidiBrowserCategory(int instrumentIndex);
 int standardMidiBrowserCount();
 
+// Shared name-heuristic instrument category used by the browser, sidebar, and modal list.
+std::string instrumentCategoryFromName(const std::string& name);
+
 struct GuiInstrumentBrowserOpenContext {
     bool& audioTuningDialogActive;
     bool& instrumentBrowserActive;

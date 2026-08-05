@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
+
+#include "ui/gui/GuiInstrumentBrowserOps.h"
 
 namespace arachno {
 
@@ -57,6 +60,28 @@ std::string defaultPatchPath(
     const std::filesystem::path factoryDir = workingDir / "patches" / "factory";
     std::error_code ec;
     if (std::filesystem::exists(factoryDir, ec) && std::filesystem::is_directory(factoryDir, ec)) {
+        // Route saves into the matching category subfolder when one exists.
+        const std::string category = instrumentCategoryFromName(patchName);
+        const char* subfolder = nullptr;
+        if (category == "Percussion") {
+            subfolder = "drums";
+        } else if (category == "Bass") {
+            subfolder = "bass";
+        } else if (category == "Lead") {
+            subfolder = "lead";
+        } else if (category == "Pads") {
+            subfolder = "pads";
+        } else if (category == "Strings") {
+            subfolder = "strings";
+        } else if (category == "FX") {
+            subfolder = "fx";
+        }
+        if (subfolder != nullptr) {
+            const std::filesystem::path categoryDir = factoryDir / subfolder;
+            if (std::filesystem::exists(categoryDir, ec) && std::filesystem::is_directory(categoryDir, ec)) {
+                return (categoryDir / (stem + ".arachnopatch")).string();
+            }
+        }
         return (factoryDir / (stem + ".arachnopatch")).string();
     }
     if (hasProjectPath && !projectPath.empty()) {
@@ -80,6 +105,18 @@ std::string defaultPatchBulkPath(
         return projectPathFs.parent_path().string();
     }
     return workingDir.string();
+}
+
+std::filesystem::path defaultSettingsPath() {
+    const char* xdgConfig = std::getenv("XDG_CONFIG_HOME");
+    if (xdgConfig != nullptr && *xdgConfig != '\0') {
+        return std::filesystem::path(xdgConfig) / "arachnotracker" / "settings.txt";
+    }
+    const char* home = std::getenv("HOME");
+    if (home != nullptr && *home != '\0') {
+        return std::filesystem::path(home) / ".config" / "arachnotracker" / "settings.txt";
+    }
+    return std::filesystem::path("arachno_settings.txt");
 }
 
 } // namespace arachno

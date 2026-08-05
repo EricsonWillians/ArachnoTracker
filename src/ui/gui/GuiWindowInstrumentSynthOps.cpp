@@ -1,8 +1,66 @@
 #include "ui/gui/GuiWindowInstrumentSynthOps.h"
 
 #include <algorithm>
+#include <cctype>
+
+#include "GuiInput.h"
 
 namespace arachno {
+
+namespace {
+
+std::string canonicalizeInstrumentName(const std::string& name) {
+    const std::string lowered = lowerCopy(trimCopy(name));
+    std::string canonical;
+    canonical.reserve(lowered.size());
+    bool previousWasSpace = false;
+    for (const char ch : lowered) {
+        if (std::isalnum(static_cast<unsigned char>(ch)) || std::isspace(static_cast<unsigned char>(ch))) {
+            const bool isSpace = std::isspace(static_cast<unsigned char>(ch));
+            if (isSpace) {
+                if (!previousWasSpace && !canonical.empty()) {
+                    canonical.push_back(' ');
+                }
+                previousWasSpace = true;
+            } else {
+                canonical.push_back(ch);
+                previousWasSpace = false;
+            }
+        }
+    }
+    while (!canonical.empty() && std::isspace(static_cast<unsigned char>(canonical.back()))) {
+        canonical.pop_back();
+    }
+    return canonical;
+}
+
+std::string canonicalizeInstrumentNameCompact(const std::string& name) {
+    std::string canonical = canonicalizeInstrumentName(name);
+    canonical.erase(std::remove_if(canonical.begin(), canonical.end(), [](unsigned char ch) {
+        return std::isspace(ch);
+    }),
+    canonical.end());
+    return canonical;
+}
+
+int resolveProjectInstrumentByCanonicalName(const std::vector<InstrumentSummary>& instruments, const std::string& targetName) {
+    const std::string target = canonicalizeInstrumentName(targetName);
+    const std::string targetCompact = canonicalizeInstrumentNameCompact(targetName);
+    if (target.empty()) {
+        return -1;
+    }
+    for (std::size_t index = 0; index < instruments.size(); ++index) {
+        if (canonicalizeInstrumentName(instruments[index].name) == target) {
+            return static_cast<int>(index);
+        }
+        if (canonicalizeInstrumentNameCompact(instruments[index].name) == targetCompact) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
+} // namespace
 
 GuiWindowInstrumentSynthBindings makeInstrumentSynthBindingsFromWindowState(
     const GuiWindowInstrumentSynthContext& context) {
@@ -65,39 +123,85 @@ std::vector<int> filteredInstrumentIndicesFromWindowState(
 }
 
 void selectInstrumentFromWindowState(const GuiWindowInstrumentSynthContext& context, int index) {
+    auto ensureInstrument = [&](const std::string& fallbackName) -> bool {
+        const AppSessionSnapshot snapshot = context.activeSnapshot();
+        if (!snapshot.editor.instruments.empty()) {
+            return true;
+        }
+        AppActionRequest request;
+        request.actionId = "editor.instrument.new";
+        request.parameters = {{"name", fallbackName}};
+        const AppActionResult created = context.runActionWithRefresh(request, true);
+        context.applyActionResultStatus(created);
+        const AppSessionSnapshot updated = context.activeSnapshot();
+        return created.ok && !updated.editor.instruments.empty();
+    };
+
+    const auto createStandardInstrument = [&](const std::string& instrumentName) -> bool {
+        AppActionRequest request;
+        request.actionId = "editor.instrument.new";
+        request.parameters = {{"name", instrumentName}};
+        const AppActionResult createResult = context.runActionWithRefresh(request, true);
+        context.applyActionResultStatus(createResult);
+        return createResult.ok;
+    };
+
+    const auto resolveProjectInstrument = [&](const std::string& instrumentName) -> int {
+        const AppSessionSnapshot snapshot = context.activeSnapshot();
+        return resolveProjectInstrumentByCanonicalName(snapshot.editor.instruments, instrumentName);
+    };
+
+    const auto resolveOrCreateStandardMidi = [&](const std::string& instrumentName) -> int {
+        const int resolved = resolveProjectInstrument(instrumentName);
+        if (resolved >= 0) {
+            return resolved;
+        }
+        if (!createStandardInstrument(instrumentName)) {
+            return -1;
+        }
+        const int created = resolveProjectInstrument(instrumentName);
+        if (created >= 0) {
+            return created;
+        }
+        const AppSessionSnapshot snapshot = context.activeSnapshot();
+        const int latestCount = static_cast<int>(snapshot.editor.instruments.size());
+        return latestCount > 0 ? std::clamp(latestCount - 1, 0, latestCount - 1) : -1;
+    };
+
     if (isStandardMidiBrowserIndex(index)) {
         const std::string instrumentName = standardMidiBrowserName(index);
         if (!instrumentName.empty()) {
-            AppActionRequest request;
-            request.actionId = "editor.instrument.new";
-            request.parameters = {{"name", instrumentName}};
-            const AppActionResult result = context.runAction(request);
-            context.applyActionResultStatus(result);
-            if (result.ok) {
-                const int newInstrument = static_cast<int>(context.session.song().instruments.size()) - 1;
-                if (newInstrument >= 0) {
-                    index = newInstrument;
-                } else {
-                    return;
-                }
-            } else {
+            const int resolvedIndex = resolveOrCreateStandardMidi(instrumentName);
+            if (resolvedIndex < 0) {
                 return;
             }
+            index = resolvedIndex;
         } else {
             return;
         }
     }
 
-    const AppSessionSnapshot snap = context.activeSnapshot();
-    const int count = static_cast<int>(snap.editor.instruments.size());
-    if (count <= 0 || index < 0 || index >= count) {
+    const AppSessionSnapshot snapshot = context.activeSnapshot();
+    int count = static_cast<int>(snapshot.editor.instruments.size());
+    if (count <= 0) {
+        if (!ensureInstrument("Init")) {
+            return;
+        }
+        const AppSessionSnapshot updated = context.activeSnapshot();
+        count = static_cast<int>(updated.editor.instruments.size());
+    }
+    if (count <= 0) {
         return;
     }
-    context.armedInstrument = index;
-    AppActionRequest inst;
-    inst.actionId = "editor.step.instrument";
-    inst.parameters = {{"index", std::to_string(context.armedInstrument)}};
-    (void)context.runAction(inst);
+
+    const int clampedIndex = std::clamp(index, 0, count - 1);
+    context.armedInstrument = clampedIndex;
+    AppActionRequest stepInstrument;
+    stepInstrument.actionId = "editor.step.instrument";
+    stepInstrument.parameters = {{"index", std::to_string(context.armedInstrument)}};
+    (void)context.runActionWithRefresh(stepInstrument, false);
+    context.synthScopeRetriggerRequested = true;
+
     if (context.armedInstrument < context.instrumentListStart) {
         context.instrumentListStart = context.armedInstrument;
     } else if (context.armedInstrument >= context.instrumentListStart + std::max(1, context.instrumentListVisibleRows)) {
@@ -110,6 +214,12 @@ void selectInstrumentFromWindowState(const GuiWindowInstrumentSynthContext& cont
 
 void openInstrumentBrowserFromWindowState(const GuiWindowInstrumentSynthContext& context) {
     const AppSessionSnapshot snap = context.activeSnapshot();
+    const int count = static_cast<int>(snap.editor.instruments.size());
+    if (count > 0) {
+        context.armedInstrument = std::clamp(context.armedInstrument, 0, count - 1);
+    } else {
+        context.armedInstrument = 0;
+    }
     arachno::openInstrumentBrowser(
         GuiInstrumentBrowserOpenContext {
             context.audioTuningDialogActive,
@@ -137,9 +247,7 @@ void closeInstrumentBrowserFromWindowState(
                 0,
                 static_cast<int>(indices.size()) - 1);
             const int instrumentIndex = indices[static_cast<std::size_t>(row)];
-            if (!isStandardMidiBrowserIndex(instrumentIndex)) {
-                selectInstrument(instrumentIndex);
-            }
+            selectInstrument(instrumentIndex);
         }
     }
 
@@ -163,8 +271,8 @@ void cycleInstrumentByFromWindowState(
 
 void clampInstrumentListWindowFromWindowState(const GuiWindowInstrumentSynthContext& context) {
     const AppSessionSnapshot snap = context.activeSnapshot();
-    const int count = static_cast<int>(filteredInstrumentIndicesForQuery(snap, "").size());
-    arachno::clampInstrumentListWindow(snap, context.instrumentListVisibleRows, context.instrumentListStart);
+    const int count = static_cast<int>(snap.editor.instruments.size());
+    context.instrumentListStart = std::clamp(context.instrumentListStart, 0, std::max(0, count - 1));
     if (count <= 0) {
         context.instrumentListStart = 0;
         return;
@@ -175,7 +283,7 @@ void clampInstrumentListWindowFromWindowState(const GuiWindowInstrumentSynthCont
 
 void scrollInstrumentListFromWindowState(const GuiWindowInstrumentSynthContext& context, int delta) {
     const AppSessionSnapshot snap = context.activeSnapshot();
-    const int count = static_cast<int>(filteredInstrumentIndicesForQuery(snap, "").size());
+    const int count = static_cast<int>(snap.editor.instruments.size());
     if (count <= 0) {
         context.instrumentListStart = 0;
         return;

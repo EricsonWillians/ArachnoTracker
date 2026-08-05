@@ -42,6 +42,7 @@ struct GuiWindowRunLoopAdapterContext {
     std::string& synthTooltipParam;
     std::chrono::steady_clock::time_point& synthTooltipHoverSince;
     std::chrono::steady_clock::time_point& lastRefresh;
+    std::chrono::steady_clock::time_point& lastPlayheadPoll;
 
     std::function<bool(const XEvent&)> isAutoRepeatRelease;
     std::function<void(unsigned int)> releaseSynthPreviewKey;
@@ -49,8 +50,13 @@ struct GuiWindowRunLoopAdapterContext {
     std::function<int()> playbackSampleRate;
     std::function<void()> processRealtimeAudio;
     std::function<void()> refreshSnapshot;
+    std::function<int()> pollPlayhead;
     std::function<void()> drawMainWindow;
     std::function<void()> drawSynthWindow;
+    std::function<void()> syncArmedInstrument;
+    // True when the dedicated audio producer thread owns block rendering; the
+    // GUI loop may sleep instead of hot-spinning to service inline audio.
+    bool audioProducerActive = false;
 };
 
 void runMainLoopFromAdapter(const GuiWindowRunLoopAdapterContext& context);

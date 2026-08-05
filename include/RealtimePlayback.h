@@ -1,6 +1,9 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -49,6 +52,8 @@ struct AuditionRequest {
     double gateSeconds = 0.35;
     double pan = 0.0;
     std::string label;
+    // When true the voice sustains at its envelope sustain level until auditionNoteOff().
+    bool sustainUntilNoteOff = false;
 };
 
 struct AuditionResult {
@@ -82,7 +87,8 @@ public:
         int midiNote = 60,
         float velocity = 0.8f,
         double gateSeconds = 0.35,
-        double pan = 0.0);
+        double pan = 0.0,
+        bool sustainUntilNoteOff = false);
     AuditionResult auditionDrumPatch(
         const SynthPatch& patch,
         int midiNote = 36,
@@ -93,7 +99,12 @@ public:
         int instrumentIndex,
         int midiNote = 60,
         float velocity = 0.8f,
-        double gateSeconds = 0.35);
+        double gateSeconds = 0.35,
+        bool sustainUntilNoteOff = false);
+    // Releases a sustained audition voice. instrumentIndex < 0 targets patch-preview voices.
+    void auditionNoteOff(int midiNote, int instrumentIndex = -1);
+    // Releases every gated voice (negative instrumentIndex = all voices).
+    void releaseAllNotes(int instrumentIndex = -2);
     void applyLiveInstrumentWaveformChange(int instrumentIndex, const std::string& oscillator, Waveform waveform);
     void applyLiveInstrumentParameterChange(int instrumentIndex, const std::string& parameter, double value);
     AuditionResult auditionStep(int patternIndex, int row, int track);
@@ -101,6 +112,12 @@ public:
 
     void render(float* left, float* right, int sampleCount);
     PlaybackSnapshot snapshot() const;
+
+    // Single shared audio-state mutex (recursive, no nested third-party locks):
+    // serializes render blocks (dedicated producer thread) against transport,
+    // audition, and song-mutation calls (GUI thread). ApplicationSession exposes
+    // it as audioStateMutex(); never hold it across waits or redraws.
+    std::recursive_mutex& apiMutex() const { return apiMutex_; }
 
 private:
     struct MixBusState {
@@ -128,6 +145,8 @@ private:
         double pan = 0.0;
         double gateSeconds = 0.2;
         double priority = 0.0;
+        // Note-off event: releases the last note started on this track.
+        bool noteOff = false;
     };
 
     RowLocation locateRow(int absoluteRow) const;
@@ -143,21 +162,38 @@ private:
     double totalRows() const;
     double secondsPerRow() const;
 
+    // Written under apiMutex_ (GUI thread). The lock-free snapshot() never
+    // dereferences it — it consults the hasSong_ flag and lookupSnapshot_.
     const Song* song_ = nullptr;
+    std::atomic<bool> hasSong_ {false};
+    mutable std::recursive_mutex apiMutex_;
+    // Tiny side mutex for composite loop state read by the lock-free snapshot.
+    // Never nested with apiMutex_ (taken either inside it or alone).
+    mutable std::mutex stateMutex_;
     int sampleRate_ = 48000;
-    TransportState state_ = TransportState::Stopped;
+    std::atomic<TransportState> state_ {TransportState::Stopped};
     PlaybackLoop loop_;
-    bool followCursor_ = true;
-    double playheadRows_ = 0.0;
+    std::atomic<bool> followCursor_ {true};
+    std::atomic<double> playheadRows_ {0.0};
     Synthesizer synth_;
     MixBusState mixBus_;
     std::vector<RowLocation> rowMap_;
+    // Published read-only lookup for the lock-free snapshot() path (swapped
+    // atomically after rebuildRowMap under apiMutex_). Bundles the row map with
+    // secondsPerRow so snapshot never dereferences song_ off-lock.
+    struct PublishedLookup {
+        double secondsPerRow = 0.0;
+        std::vector<RowLocation> rows;
+    };
+    std::shared_ptr<const PublishedLookup> lookupSnapshot_;
     std::vector<PreparedEvent> preparedEvents_;
     std::vector<SynthPatch> preparedPatchOverrides_;
     // Reused per-segment bookkeeping to avoid allocations on the realtime audio path.
     std::vector<int> trackFrameCountersScratch_;
     std::vector<int> trackFrameStampsScratch_;
     std::vector<int> trackSegmentCountersScratch_;
+    // Last started note per track for note-off steps; persists across render segments.
+    std::vector<int> lastNoteForTrackScratch_;
     std::vector<SynthPatch> loadSafeInstrumentPatchesScratch_;
     std::vector<unsigned char> loadSafeInstrumentPatchValidScratch_;
     std::vector<SynthPatch> loadSafeOverridePatchesScratch_;

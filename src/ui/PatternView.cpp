@@ -89,10 +89,13 @@ PatternGrid buildPatternGrid(
             cell.track = track;
             cell.trackName = grid.trackNames[static_cast<std::size_t>(track)];
             cell.hasNote = step.note.has_value();
+            cell.noteOff = step.noteOff;
             if (step.note.has_value()) {
                 cell.noteName = step.note->name();
                 cell.midiNote = step.note->midi;
                 cell.velocity = step.note->velocity;
+            } else if (step.noteOff) {
+                cell.noteName = "===";
             }
             cell.instrument = step.instrument;
             cell.gateRows = step.gate;

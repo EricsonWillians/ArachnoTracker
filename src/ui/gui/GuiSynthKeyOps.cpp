@@ -59,16 +59,16 @@ GuiSynthKeyResult handleSynthWindowKeyPress(
 
     auto setSynthOctaveFromShortcut = [&](int octave) {
         context.setArmedOctave(octave);
-        context.synthPreviewMidi = std::clamp((context.armedOctave * 12) + (context.synthPreviewMidi % 12), 0, 127);
+        context.synthPreviewMidi = std::clamp(((context.armedOctave + 1) * 12) + (context.synthPreviewMidi % 12), 0, 127);
         context.paintNoteMidi = context.synthPreviewMidi;
         context.ensureSynthKeyboardShowsMidi(context.synthPreviewMidi);
     };
 
     if (key == XK_Escape) {
         context.setSynthWindowVisible(false);
-    } else if (key == XK_Left) {
+    } else if (key == XK_Left || key == XK_Up) {
         context.cycleInstrument(-1);
-    } else if (key == XK_Right) {
+    } else if (key == XK_Right || key == XK_Down) {
         context.cycleInstrument(1);
     } else if (key == XK_space || key == XK_Return) {
         if (context.claimSynthPreviewKey(keyEvent.keycode, context.synthPreviewMidi)) {

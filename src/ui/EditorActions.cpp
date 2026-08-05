@@ -67,7 +67,9 @@ const std::vector<EditorAction>& editorActions() {
         {"history.undo", "undo", "Undo", "History", "Ctrl+Z", "Restore the previous editing state.", true},
         {"history.redo", "redo", "Redo", "History", "Ctrl+Shift+Z", "Restore the next editing state after undo.", true},
 
-        {"step.note", "note <note> [velocity]", "Enter note", "Step Editing", "Return", "Write a note into the active step.", true},
+    {"step.note", "note <note> [velocity] [index]", "Enter note", "Step Editing", "Return", "Write a note into the active step.", true},
+        {"step.noteoff", "noteoff", "Enter note-off", "Step Editing", "Caps Lock", "Write a note-off (release) into the active step.", true},
+        {"step.legato", "legato [on|off|toggle]", "Toggle legato input", "Step Editing", "L", "When armed, entered notes sustain until the next note or note-off (===) on the track.", false},
         {"step.instrument", "inst <index>", "Set instrument", "Step Editing", "I", "Assign an instrument to the active step.", true},
         {"step.gate", "gate <rows>", "Set gate", "Step Editing", "G", "Set note length in tracker rows.", true},
         {"step.probability", "probability <0..1|clear>", "Set probability", "Step Editing", "P", "Set deterministic trigger probability for the active step.", true},

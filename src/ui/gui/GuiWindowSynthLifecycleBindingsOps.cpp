@@ -61,10 +61,21 @@ GuiWindowSynthLifecycleBindings makeSynthLifecycleBindingsFromWindowState(
     bindings.claimSynthPreviewKey = [lifecycleInput](unsigned int keycode, int midiNote) {
         return claimSynthPreviewKeyFromWindowState(lifecycleInput, keycode, midiNote);
     };
-    bindings.releaseSynthPreviewKey = [lifecycleInput](unsigned int keycode) {
+    bindings.releaseSynthPreviewKey = [lifecycleInput, noteOff = input.auditionSynthPreviewNoteOff](unsigned int keycode) {
+        if (keycode < lifecycleInput.synthPreviewKeyMidi.size()
+            && lifecycleInput.synthPreviewKeyHeld[keycode]
+            && lifecycleInput.synthPreviewKeyMidi[keycode] >= 0
+            && noteOff) {
+            // Key released: end the sustained preview note so the envelope enters release.
+            noteOff(lifecycleInput.synthPreviewKeyMidi[keycode]);
+        }
         releaseSynthPreviewKeyFromWindowState(lifecycleInput, keycode);
     };
-    bindings.setSynthWindowVisible = [lifecycleInput](bool visible) {
+    bindings.setSynthWindowVisible = [lifecycleInput, releaseAll = input.releaseAllSynthPreviewNotes](bool visible) {
+        if (!visible && releaseAll) {
+            // Closing the designer must not leave sustained preview notes ringing.
+            releaseAll();
+        }
         setSynthWindowVisibleFromWindowState(lifecycleInput, visible);
     };
     bindings.runFileButtonAction = [=](const std::string& actionId) {

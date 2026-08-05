@@ -55,10 +55,26 @@ public:
     int frameMax() const;
     int loadClass() const;
     int outputPressureLevel();
+    // Queue-health counters (atomics) for in-situ diagnostics: producer deficit
+    // (starve), backpressure (cong), device-side underruns (xrun), write fails.
+    int outputStarvationEvents() const { return outputStarvationEvents_.load(std::memory_order_relaxed); }
+    int outputCongestionEvents() const { return outputCongestionEvents_.load(std::memory_order_relaxed); }
+    int outputXrunRecoveries() const { return outputXrunRecoveries_.load(std::memory_order_relaxed); }
+    int outputWriteFailures() const { return outputWriteFailures_.load(std::memory_order_relaxed); }
+    // Whether the dedicated producer thread (vs GUI-inline fallback) renders audio.
+    void setProducerActive(bool active) { producerActive_.store(active, std::memory_order_relaxed); }
+    bool producerActive() const { return producerActive_.load(std::memory_order_relaxed); }
+    // Current ALSA device latency in ms. Starts at 20; escalates (20->48->96)
+    // on measured xrun streaks so bursty downstream pulls (PipeWire Bluetooth
+    // leg) stop underrunning the ring. Fixed override: ARACHNO_ALSA_LATENCY_MS.
+    unsigned int alsaLatencyMs() const { return alsaLatencyUs_.load(std::memory_order_relaxed) / 1000; }
     std::pair<std::size_t, std::size_t> alsaQueueUsage();
     std::pair<std::size_t, std::size_t> pipeQueueUsage();
 
 private:
+    // Serializes open/write/close across the GUI thread and the dedicated audio
+    // producer thread (recursive: open() and write() can call close()).
+    std::recursive_mutex audioLifecycleMutex_;
 #if ARACHNO_HAS_ALSA
     void resetAlsaQueue(int sampleRate);
     void tuneAlsaQueueForLoad(int sampleRate, int loadClass);
@@ -98,6 +114,12 @@ private:
     std::atomic<int> outputStarvationEvents_ {0};
     std::atomic<int> outputXrunRecoveries_ {0};
     std::atomic<int> outputWriteFailures_ {0};
+    std::atomic<bool> producerActive_ {false};
+    // Adaptive device latency (see alsaLatencyMs()): persists across
+    // close/open so an escalation survives the reopen it triggers; reset to
+    // 20 ms only on explicit performance-mode change.
+    std::atomic<unsigned int> alsaLatencyUs_ {20000};
+    bool alsaLatencyOverride_ = false;
     std::chrono::steady_clock::time_point outputPressureLastDecay_ {};
     std::mutex outputPressureMutex_;
 

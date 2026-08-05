@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <cstdint>
 #include <cmath>
 #include <filesystem>
@@ -26,6 +27,7 @@
 #include "ExportWorkflow.h"
 #include "FileCompatibility.h"
 #include "GUI.h"
+#include "GmPresetBank.h"
 #include "MidiImporter.h"
 #include "MidiExporter.h"
 #include "Note.h"
@@ -303,6 +305,11 @@ void testSynthParameterSurface() {
         {"filter_decay", 0.16},
         {"filter_sustain", 0.58},
         {"filter_release", 0.24},
+        {"portamento", 0.06},
+        {"portamento_legato", 1.0},
+        {"fm_decay", 0.35},
+        {"velocity_to_fm", 0.5},
+        {"mono_mode", 1.0},
     };
     for (const auto& [name, value] : parameters) {
         assert(arachno::setSynthPatchParameter(patch, name, value));
@@ -453,6 +460,293 @@ void testSynthEnvelopeGateRelease() {
     }
     assert(earlyPeak > 0.001);
     assert(latePeak < earlyPeak * 0.18);
+}
+
+void testSynthNoteOffSustain() {
+    arachno::SynthPatch patch;
+    patch.oscillatorAEnabled = true;
+    patch.oscillatorBEnabled = false;
+    patch.oscillatorCEnabled = false;
+    patch.oscillatorDEnabled = false;
+    patch.oscillatorA = arachno::Waveform::Sine;
+    patch.fmEnabled = false;
+    patch.ringEnabled = false;
+    patch.hardSyncEnabled = false;
+    patch.chorusEnabled = false;
+    patch.bitCrushEnabled = false;
+    patch.noiseEnabled = false;
+    patch.subEnabled = false;
+    patch.gain = 0.85;
+    patch.ampEnvelope.attack = 0.01;
+    patch.ampEnvelope.decay = 0.05;
+    patch.ampEnvelope.sustain = 0.80;
+    patch.ampEnvelope.release = 0.08;
+
+    arachno::Synthesizer synth(48000.0);
+    constexpr int blockFrames = 4800; // 0.1s blocks
+    std::vector<float> left(blockFrames, 0.0f);
+    std::vector<float> right(blockFrames, 0.0f);
+    auto renderBlock = [&]() {
+        // Synthesizer::render accumulates into the output buffers; callers must clear them.
+        std::fill(left.begin(), left.end(), 0.0f);
+        std::fill(right.begin(), right.end(), 0.0f);
+        synth.render(left.data(), right.data(), blockFrames);
+    };
+    auto blockPeak = [&]() {
+        double peak = 0.0;
+        for (int i = 0; i < blockFrames; ++i) {
+            peak = std::max(peak, std::max(
+                std::abs(static_cast<double>(left[static_cast<std::size_t>(i)])),
+                std::abs(static_cast<double>(right[static_cast<std::size_t>(i)]))));
+        }
+        return peak;
+    };
+
+    // A sustained note must keep sounding at its sustain level long past any normal gate.
+    synth.noteOn(arachno::Note(60, 1.0f), patch, 0.0, 0.05, -1, true);
+    double heldPeak = 0.0;
+    for (int block = 0; block < 10; ++block) { // 1.0s total
+        renderBlock();
+        if (block >= 6) { // 0.6s..1.0s: far beyond the nominal 0.05s gate
+            heldPeak = std::max(heldPeak, blockPeak());
+        }
+    }
+    assert(heldPeak > 0.05);
+
+    // noteOff ends the sustain and the release phase decays to silence.
+    synth.noteOff(60);
+    double releasePeak = 0.0;
+    for (int block = 0; block < 10; ++block) { // 1.0s of release
+        renderBlock();
+        if (block >= 8) {
+            releasePeak = std::max(releasePeak, blockPeak());
+        }
+    }
+    assert(releasePeak < heldPeak * 0.02);
+
+    // allNotesOff also ends sustained voices.
+    synth.noteOn(arachno::Note(64, 1.0f), patch, 0.0, 0.05, -1, true);
+    renderBlock();
+    synth.allNotesOff(-1);
+    double allOffPeak = 0.0;
+    for (int block = 0; block < 10; ++block) {
+        renderBlock();
+        if (block >= 8) {
+            allOffPeak = std::max(allOffPeak, blockPeak());
+        }
+    }
+    assert(allOffPeak < heldPeak * 0.02);
+}
+
+void testSequencerNoteOff() {
+    arachno::Song song = arachno::makeBlankSong();
+    arachno::SynthPatch& patch = song.instruments[0].patch;
+    patch.oscillatorA = arachno::Waveform::Sine;
+    patch.oscillatorBEnabled = false;
+    patch.oscillatorCEnabled = false;
+    patch.oscillatorDEnabled = false;
+    patch.noiseEnabled = false;
+    patch.gain = 0.8;
+    patch.ampEnvelope.attack = 0.005;
+    patch.ampEnvelope.decay = 0.05;
+    patch.ampEnvelope.sustain = 0.9;
+    patch.ampEnvelope.release = 0.05;
+
+    arachno::PatternStep& noteStep = song.patterns[0].step(0, 0);
+    noteStep.note = arachno::Note(arachno::noteNameToMidi("C4"), 1.0f);
+    noteStep.instrument = 0;
+    noteStep.gate = 30.0; // would ring ~3.5s without a note-off step
+    arachno::PatternStep& offStep = song.patterns[0].step(8, 0);
+    offStep.noteOff = true;
+
+    arachno::AudioEngine engine(song.sampleRate);
+    auto peakBetween = [](const arachno::RenderedAudio& audio, double startSec, double endSec) {
+        double peak = 0.0;
+        const int start = static_cast<int>(startSec * audio.sampleRate);
+        const int end = std::min(static_cast<int>(endSec * audio.sampleRate), static_cast<int>(audio.frameCount()));
+        for (int frame = start; frame < end; ++frame) {
+            const std::size_t idx = static_cast<std::size_t>(frame) * 2;
+            peak = std::max(peak, std::max(
+                std::abs(static_cast<double>(audio.interleavedStereo[idx])),
+                std::abs(static_cast<double>(audio.interleavedStereo[idx + 1]))));
+        }
+        return peak;
+    };
+
+    const arachno::RenderedAudio audio = engine.renderSong(song);
+    const double heldPeak = peakBetween(audio, 0.2, 0.6);
+    // Note-off fires at row 8 (~0.94s at 128bpm/4rpb) with a 0.05s release.
+    const double tailPeak = peakBetween(audio, 1.5, 3.0);
+    assert(heldPeak > 0.05);
+    assert(tailPeak < heldPeak * 0.05);
+
+    // Sanity: without the note-off step the same note is still sounding in the tail window.
+    offStep.noteOff = false;
+    const arachno::RenderedAudio sustainedAudio = engine.renderSong(song);
+    const double sustainedLatePeak = peakBetween(sustainedAudio, 1.5, 3.0);
+    assert(sustainedLatePeak > heldPeak * 0.3);
+}
+
+void testNoteOffStepRoundTrip() {
+    arachno::Song song = arachno::makeBlankSong();
+    arachno::PatternStep& noteStep = song.patterns[0].step(0, 0);
+    noteStep.note = arachno::Note(60, 0.9f);
+    noteStep.instrument = 0;
+    arachno::PatternStep& offStep = song.patterns[0].step(4, 0);
+    offStep.noteOff = true;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "arachno-noteoff-roundtrip.arachno";
+    arachno::saveProject(song, path.string());
+    const arachno::Song loaded = arachno::loadProject(path.string());
+    assert(loaded.patterns[0].step(4, 0).noteOff);
+    assert(!loaded.patterns[0].step(4, 0).note.has_value());
+    assert(!loaded.patterns[0].step(0, 0).noteOff);
+    assert(loaded.patterns[0].step(0, 0).note.has_value());
+
+    // Older files without the trailing note-off token must still load with noteOff = false.
+    std::ifstream in(path);
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    in.close();
+    std::string text = buffer.str();
+    const std::string marker = "step 4 0 ";
+    const std::size_t lineStart = text.find(marker);
+    assert(lineStart != std::string::npos);
+    const std::size_t lineEnd = text.find('\n', lineStart);
+    assert(lineEnd != std::string::npos);
+    std::string legacyLine = text.substr(lineStart, lineEnd - lineStart);
+    const std::size_t lastSpace = legacyLine.find_last_of(' ');
+    assert(lastSpace != std::string::npos);
+    legacyLine = legacyLine.substr(0, lastSpace); // strip the trailing note-off token
+    text.replace(lineStart, lineEnd - lineStart, legacyLine);
+    const std::filesystem::path legacyPath = std::filesystem::temp_directory_path() / "arachno-noteoff-legacy.arachno";
+    {
+        std::ofstream out(legacyPath);
+        out << text;
+    }
+    const arachno::Song legacyLoaded = arachno::loadProject(legacyPath.string());
+    assert(!legacyLoaded.patterns[0].step(4, 0).noteOff);
+    assert(legacyLoaded.patterns[0].step(0, 0).note.has_value());
+
+    // Editor command surface: noteoff writes a release step, entering a note clears it.
+    arachno::PatternEditorSession editor(song);
+    editor.applyCommand("move 4 0");
+    editor.applyCommand("noteoff");
+    assert(song.patterns[0].step(4, 0).noteOff);
+    assert(!song.patterns[0].step(4, 0).note.has_value());
+    editor.applyCommand("note C4 0.9");
+    assert(!song.patterns[0].step(4, 0).noteOff);
+    assert(song.patterns[0].step(4, 0).note.has_value());
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(legacyPath);
+}
+
+void testLegatoInput() {
+    arachno::Song song = arachno::makeBlankSong();
+    arachno::PatternEditorSession editor(song);
+    const int rowCount = song.patterns[0].rowCount();
+
+    // Default: legato disarmed keeps the standard per-step gate.
+    assert(!editor.legatoInputEnabled());
+    editor.applyCommand("move 0 0");
+    editor.applyCommand("note C4 0.9");
+    assert(song.patterns[0].step(0, 0).note.has_value());
+    assert(song.patterns[0].step(0, 0).gate == 0.88);
+
+    // Legato armed: a note sustains to the pattern end when nothing follows.
+    editor.applyCommand("legato on");
+    assert(editor.legatoInputEnabled());
+    editor.applyCommand("move 8 0");
+    editor.applyCommand("note G4 0.9");
+    assert(song.patterns[0].step(8, 0).gate == static_cast<double>(rowCount - 8));
+
+    // A note entered before an existing note sustains exactly up to it.
+    editor.applyCommand("move 4 0");
+    editor.applyCommand("note E4 0.9");
+    assert(song.patterns[0].step(4, 0).gate == 4.0);
+
+    // A note-off step (===) also terminates the sustain.
+    editor.applyCommand("move 12 0");
+    editor.applyCommand("noteoff");
+    editor.applyCommand("move 10 0");
+    editor.applyCommand("note C5 0.9");
+    assert(song.patterns[0].step(10, 0).gate == 2.0);
+
+    // Steps on other tracks do not cut the sustain short.
+    editor.applyCommand("move 6 1");
+    editor.applyCommand("note C3 0.9");
+    assert(song.patterns[0].step(6, 1).gate == static_cast<double>(rowCount - 6));
+    assert(song.patterns[0].step(4, 0).gate == 4.0);
+
+    // Bare "legato" toggles back off; entries fall back to the default gate.
+    editor.applyCommand("legato");
+    assert(!editor.legatoInputEnabled());
+    editor.applyCommand("move 16 0");
+    editor.applyCommand("note C4 0.9");
+    assert(song.patterns[0].step(16, 0).gate == 0.88);
+
+    // Toggling legato must not dirty the project undo history.
+    arachno::PatternEditorSession undoProbe(song);
+    assert(!undoProbe.canUndo());
+    undoProbe.applyCommand("legato on");
+    undoProbe.applyCommand("legato off");
+    assert(!undoProbe.canUndo());
+}
+
+void testAudioProducerThreadContract() {
+    // The shared audio-state mutex (RealtimePlaybackSession::apiMutex, exposed
+    // as ApplicationSession::audioStateMutex) must serialize producer-thread
+    // render blocks against transport, audition, and song mutations without
+    // deadlock or state corruption — the contract the GUI audio producer
+    // thread relies on.
+    arachno::Song song = arachno::makeBlankSong();
+    arachno::RealtimePlaybackSession playback(song.sampleRate);
+    playback.setSong(&song);
+    std::atomic<bool> stop {false};
+    std::atomic<long> framesRendered {0};
+    std::thread producer([&]() {
+        std::vector<float> left(256, 0.0f);
+        std::vector<float> right(256, 0.0f);
+        while (!stop.load(std::memory_order_relaxed)) {
+            playback.render(left.data(), right.data(), 256);
+            framesRendered.fetch_add(256, std::memory_order_relaxed);
+        }
+    });
+    arachno::PatternEditorSession editor(song);
+    for (int i = 0; i < 200; ++i) {
+        {
+            // Mirrors ApplicationSession::applyEditorCommand's guard.
+            const std::lock_guard<std::recursive_mutex> lock(playback.apiMutex());
+            editor.applyCommand("note C4 0.9");
+            editor.applyCommand("down");
+        }
+        playback.play();
+        playback.previewInstrument(0, 60 + (i % 12), 0.8f, 0.1);
+        if ((i % 5) == 0) {
+            playback.pause();
+        }
+        if ((i % 7) == 0) {
+            playback.play();
+        }
+        if ((i % 11) == 0) {
+            playback.stop();
+        }
+    }
+    playback.play();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Lock-free snapshot contract: audition with a STOPPED transport must be
+    // visible as previewActive immediately (the GUI producer gates audition
+    // rendering on it; a telemetry-stale false silences the patch screen).
+    playback.stop();
+    playback.previewInstrument(0, 60, 0.8f, 0.1);
+    assert(playback.snapshot().previewActive);
+    stop.store(true, std::memory_order_relaxed);
+    producer.join();
+    assert(framesRendered.load() > 0);
+    playback.stop();
+    const arachno::PlaybackSnapshot snap = playback.snapshot();
+    assert(snap.state == arachno::TransportState::Stopped);
 }
 
 void testAudioRuntimeContract() {
@@ -619,6 +913,41 @@ void testApplicationSessionState() {
     std::filesystem::remove(path);
 }
 
+#include "ui/gui/GuiFileBrowserOps.h"
+#include "ui/gui/GuiPathDefaults.h"
+
+void testPatchBrowserUxHelpers() {
+    using arachno::InlinePromptKind;
+    assert(arachno::inlinePromptKindIsPatch(InlinePromptKind::ImportPatchAsNewPath));
+    assert(arachno::inlinePromptKindIsPatch(InlinePromptKind::ImportPatchReplacePath));
+    assert(arachno::inlinePromptKindIsPatch(InlinePromptKind::ImportPatchReplaceAllPath));
+    assert(arachno::inlinePromptKindIsPatch(InlinePromptKind::ExportPatchPath));
+    assert(!arachno::inlinePromptKindIsPatch(InlinePromptKind::OpenProjectPath));
+    assert(arachno::inlinePromptKindPreviewsPatchFile(InlinePromptKind::ImportPatchAsNewPath));
+    assert(arachno::inlinePromptKindPreviewsPatchFile(InlinePromptKind::ImportPatchReplacePath));
+    assert(!arachno::inlinePromptKindPreviewsPatchFile(InlinePromptKind::ImportPatchReplaceAllPath));
+    assert(!arachno::inlinePromptKindPreviewsPatchFile(InlinePromptKind::ExportPatchPath));
+
+    // Double-click detection: second click on the same entry confirms, streak is consumed.
+    const bool first = arachno::fileBrowserRegisterClickForDoubleClick(7);
+    const bool second = arachno::fileBrowserRegisterClickForDoubleClick(7);
+    const bool third = arachno::fileBrowserRegisterClickForDoubleClick(7);
+    assert(!first);
+    assert(second);
+    assert(!third);
+    // A different index breaks the streak; clicking the new index again is a double.
+    const bool otherIndex = arachno::fileBrowserRegisterClickForDoubleClick(3);
+    assert(!otherIndex);
+    const bool otherIndexAgain = arachno::fileBrowserRegisterClickForDoubleClick(3);
+    assert(otherIndexAgain);
+    const bool afterConsumed = arachno::fileBrowserRegisterClickForDoubleClick(3);
+    assert(!afterConsumed);
+
+    const std::filesystem::path settingsPath = arachno::defaultSettingsPath();
+    assert(!settingsPath.empty());
+    assert(settingsPath.filename() == "settings.txt");
+}
+
 void testAppSettingsPersistence() {
     arachno::AppSettings settings;
     settings.exportDefaults.defaultDirectory = "/tmp/arachno-export";
@@ -637,6 +966,7 @@ void testAppSettingsPersistence() {
     settings.audioRuntime.connectSystemOutputs = false;
     settings.shortcutOverrides.push_back({"Ctrl+Alt+Z", "history.undo"});
     settings.syncCheckpoints.push_back({"main-window", 42, 7, "/tmp/first.arachno", "fingerprint-v1"});
+    settings.browser.lastPatchDirectory = "/tmp/arachno-patches/bass";
     assert(arachno::findSyncCheckpoint(settings, "main-window") != nullptr);
     assert(arachno::upsertSyncCheckpoint(settings, {"secondary", 91, 12}));
     assert(arachno::findSyncCheckpoint(settings, "secondary") != nullptr);
@@ -681,6 +1011,7 @@ void testAppSettingsPersistence() {
     assert(loaded.syncCheckpoints.front().taskId == 7);
     assert(loaded.syncCheckpoints.front().projectPath == "/tmp/first.arachno");
     assert(loaded.syncCheckpoints.front().projectFingerprint == "fingerprint-v1");
+    assert(loaded.browser.lastPatchDirectory == "/tmp/arachno-patches/bass");
 
     const arachno::AudioRuntimeSettings runtimeSettings =
         arachno::audioRuntimeSettingsFromPreferences(loaded.audioRuntime);
@@ -1106,18 +1437,20 @@ void testApplicationActionBridge() {
         noteEntries.begin(),
         noteEntries.end(),
         [](const arachno::AppActionEntry& entry) {
-            return entry.id == "editor.step.note" && entry.requiresCommandText && entry.parameterCount == 2;
+            return entry.id == "editor.step.note" && entry.requiresCommandText && entry.parameterCount == 3;
         }));
 
     const arachno::AppActionSchema noteSchema = arachno::buildAppActionSchema("editor.step.note");
     assert(noteSchema.kind == arachno::AppActionKind::Editor);
-    assert(noteSchema.parameters.size() == 2);
+    assert(noteSchema.parameters.size() == 3);
     assert(noteSchema.parameters[0].name == "note");
     assert(noteSchema.parameters[0].type == arachno::AppActionParameterType::NoteName);
     assert(noteSchema.parameters[1].name == "velocity");
     assert(!noteSchema.parameters[1].required);
     assert(noteSchema.parameters[1].hasMinimum);
     assert(noteSchema.parameters[1].hasMaximum);
+    assert(noteSchema.parameters[2].name == "index");
+    assert(!noteSchema.parameters[2].required);
 
     const arachno::AppActionCommandBuild builtNote = arachno::buildCommandForAppAction(
         "editor.step.note",
@@ -1399,6 +1732,28 @@ void testApplicationActionBridge() {
     assert(opened.ok);
     assert(!app.dirty());
     assert(app.projectPath() == projectPath.string());
+
+    // Discard flow: dirty session + project.open with Discard must replace the
+    // project (this is the GUI "DISCARD" button path for abandoning edits).
+    app.applyEditorCommand("title Unfinished Work");
+    assert(app.dirty());
+    arachno::AppActionRequest openDiscard;
+    openDiscard.actionId = "project.open";
+    openDiscard.path = savePath.string();
+    openDiscard.unsavedChoice = arachno::UnsavedChangesChoice::Discard;
+    const arachno::AppActionResult discarded = arachno::executeAppAction(app, openDiscard);
+    assert(discarded.ok);
+    assert(!app.dirty());
+    assert(app.projectPath() == savePath.string());
+    // New-project discard: replaces the loaded song with a blank one.
+    app.applyEditorCommand("title Unfinished Again");
+    assert(app.dirty());
+    arachno::AppActionRequest newDiscard;
+    newDiscard.actionId = "project.new";
+    newDiscard.unsavedChoice = arachno::UnsavedChangesChoice::Discard;
+    const arachno::AppActionResult newProject = arachno::executeAppAction(app, newDiscard);
+    assert(newProject.ok);
+    assert(!app.dirty());
 
     const arachno::AppActionResult play = arachno::executeAppAction(app, {"playback.play"});
     assert(play.ok);
@@ -2453,6 +2808,10 @@ void testProjectRoundTrip() {
     assert(loaded.instruments[4].patch.outputGlue == original.instruments[4].patch.outputGlue);
     assert(loaded.instruments[4].patch.vintageDrift == original.instruments[4].patch.vintageDrift);
     assert(loaded.instruments[4].patch.wowFlutter == original.instruments[4].patch.wowFlutter);
+    assert(loaded.instruments[0].patch.portamentoTime == original.instruments[0].patch.portamentoTime);
+    assert(loaded.instruments[0].patch.portamentoLegato == original.instruments[0].patch.portamentoLegato);
+    assert(loaded.instruments[0].patch.monoMode == original.instruments[0].patch.monoMode);
+    assert(loaded.instruments[1].patch.fmDecay == original.instruments[1].patch.fmDecay);
     assert(loaded.patterns.front().step(0, 0).note.has_value());
     assert(loaded.patterns.front().step(0, 0).note->midi == 36);
     std::filesystem::remove(path);
@@ -2853,6 +3212,18 @@ void testMidiImport() {
     assert(report.trackMappings.front().instrumentIndex == 0);
     assert(report.trackMappings.front().midiSourceTrack == 0);
     assert(report.trackMappings.front().midiChannel == 0);
+
+    // GM preset bank integration: program 0x15 (21) maps to the curated "Accordion"
+    // voice, and the bank produces era-authentic parameter signatures.
+    assert(report.song.instruments.front().patch.name == "Accordion");
+    assert(report.song.instruments.front().patch.vibratoCents >= 7.9);
+    assert(report.song.instruments.front().patch.ampEnvelope.sustain >= 0.9);
+    const arachno::SynthPatch gmEp = arachno::gmPresetForProgram(4, 60.0);
+    assert(gmEp.fmEnabled && gmEp.fmAmount > 0.3);
+    const arachno::SynthPatch gmStrings = arachno::gmPresetForProgram(48, 60.0);
+    assert(gmStrings.chorusEnabled && gmStrings.chorusEnsemble > 0.4);
+    const arachno::SynthPatch gmSynthBass = arachno::gmPresetForProgram(38, 40.0);
+    assert(gmSynthBass.portamentoTime > 0.0);
 
     bool foundNote = false;
     bool foundEffects = false;
@@ -3271,6 +3642,19 @@ void testPatchRoundTrip() {
     patch.consoleCrosstalk = 0.11;
     patch.outputGlue = 0.49;
     patch.ampEnvelope.attack = 0.03;
+    patch.portamentoTime = 0.055;
+    patch.portamentoLegato = true;
+    patch.fmDecay = 0.42;
+    patch.velocityToFm = 0.6;
+    patch.monoMode = true;
+    patch.oscBRatio = 3.25;
+    patch.oscCRatio = 5.5;
+    patch.oscDRatio = 0.5;
+    patch.oscBDecay = 0.17;
+    patch.oscCDecay = 0.42;
+    patch.oscDDecay = 1.10;
+    patch.velocityToDecay = 0.66;
+    patch.keyTrackDecay = 0.77;
 
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "arachno-glass.arachnopatch";
     arachno::savePatch(patch, path.string());
@@ -3344,7 +3728,119 @@ void testPatchRoundTrip() {
     assert(loaded.consoleCrosstalk == 0.11);
     assert(loaded.outputGlue == 0.49);
     assert(loaded.ampEnvelope.attack == 0.03);
+    assert(loaded.portamentoTime == 0.055);
+    assert(loaded.portamentoLegato);
+    assert(loaded.fmDecay == 0.42);
+    assert(loaded.velocityToFm == 0.6);
+    assert(loaded.monoMode);
+    assert(loaded.oscBRatio == 3.25);
+    assert(loaded.oscCRatio == 5.5);
+    assert(loaded.oscDRatio == 0.5);
+    assert(loaded.oscBDecay == 0.17);
+    assert(loaded.oscCDecay == 0.42);
+    assert(loaded.oscDDecay == 1.10);
+    assert(loaded.velocityToDecay == 0.66);
+    assert(loaded.keyTrackDecay == 0.77);
     std::filesystem::remove(path);
+}
+
+void testLayeredTimbreDsp() {
+    // Two-layer patch: a slow sine body (osc A) plus a fast-decaying high-ratio
+    // layer (osc B). The attack must be measurably brighter than the sustain,
+    // and the body must persist after the clang layer dies.
+    arachno::Song song = arachno::makeBlankSong();
+    arachno::SynthPatch& patch = song.instruments[0].patch;
+    patch.oscillatorA = arachno::Waveform::Sine;
+    patch.oscillatorB = arachno::Waveform::Sine;
+    patch.oscillatorBEnabled = true;
+    patch.oscillatorMix = 0.50;
+    patch.oscBRatio = 4.0;
+    patch.oscBDecay = 0.10;
+    patch.oscillatorCEnabled = false;
+    patch.oscillatorDEnabled = false;
+    patch.noiseEnabled = false;
+    patch.subEnabled = false;
+    patch.cutoff = 1.0;
+    patch.resonance = 0.0;
+    patch.filterNonlinearity = 0.0;
+    patch.filterDrive = 0.0;
+    patch.drive = 0.0;
+    patch.analogColor = 0.0;
+    patch.analogWarmth = 0.0;
+    patch.vintageDrift = 0.0;
+    patch.phaseScatter = 0.0;
+    patch.voiceSlop = 0.0;
+    patch.tapeColor = 0.0;
+    patch.airBoost = 0.0;
+    patch.lowPunch = 0.0;
+    patch.hifiExciter = 0.0;
+    patch.outputTransformer = 0.0;
+    patch.outputSoftClip = 0.0;
+    patch.outputGlue = 0.0;
+    patch.toneTilt = 0.0;
+    patch.wowFlutter = 0.0;
+    patch.consoleCrosstalk = 0.0;
+    patch.stereoDepth = 0.0;
+    patch.reverbMix = 0.0;
+    patch.delayMix = 0.0;
+    patch.chorusMix = 0.0;
+    patch.gain = 0.8;
+    patch.ampEnvelope.attack = 0.001;
+    patch.ampEnvelope.decay = 2.0;
+    patch.ampEnvelope.sustain = 1.0;
+    patch.ampEnvelope.release = 0.10;
+
+    arachno::PatternStep& step = song.patterns[0].step(0, 0);
+    step.note = arachno::Note(arachno::noteNameToMidi("A4"), 1.0f);
+    step.instrument = 0;
+    step.gate = 24.0;
+
+    arachno::AudioEngine engine(song.sampleRate);
+    const arachno::RenderedAudio audio = engine.renderSong(song);
+    const int rate = audio.sampleRate;
+    auto magnitudeAt = [&](const arachno::RenderedAudio& buffer, double startSec, double durationSec, double targetHz) {
+        // Goertzel magnitude of the left channel over the window.
+        const int start = static_cast<int>(startSec * rate);
+        const int count = static_cast<int>(durationSec * rate);
+        const double omega = 2.0 * 3.14159265358979323846 * targetHz / rate;
+        const double coeff = 2.0 * std::cos(omega);
+        double s0 = 0.0;
+        double s1 = 0.0;
+        double s2 = 0.0;
+        for (int i = 0; i < count; ++i) {
+            const std::size_t idx = static_cast<std::size_t>(start + i) * 2;
+            if (idx + 1 >= buffer.interleavedStereo.size()) {
+                break;
+            }
+            s0 = static_cast<double>(buffer.interleavedStereo[idx]) + coeff * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        return std::sqrt(std::max(0.0, s1 * s1 + s2 * s2 - coeff * s1 * s2)) / std::max(1, count);
+    };
+    const double fundamental = 440.0;
+    const double clang = 440.0 * 4.0;
+    // Attack window: clang layer present. Sustain window: clang layer dead.
+    const double clangEarly = magnitudeAt(audio, 0.02, 0.05, clang);
+    const double clangLate = magnitudeAt(audio, 0.60, 0.10, clang);
+    const double bodyLate = magnitudeAt(audio, 0.60, 0.10, fundamental);
+    assert(clangEarly > clangLate * 4.0);
+    assert(bodyLate > clangLate * 4.0);
+
+    // Defaults stay clean: a plain sine with every color field at zero keeps THD < 1%.
+    patch.oscBDecay = 0.0;
+    patch.oscBRatio = 1.0;
+    patch.oscillatorBEnabled = false;
+    patch.oscillatorMix = 0.0;
+    const arachno::RenderedAudio clean = engine.renderSong(song);
+    const double fund = magnitudeAt(clean, 0.30, 0.20, fundamental);
+    double harmonicSum = 0.0;
+    for (int harmonic = 2; harmonic <= 8; ++harmonic) {
+        const double h = magnitudeAt(clean, 0.30, 0.20, fundamental * harmonic);
+        harmonicSum += h * h;
+    }
+    const double thd = std::sqrt(harmonicSum) / std::max(0.000001, fund);
+    assert(thd < 0.01);
 }
 
 void testCompositionalTransforms() {
@@ -3562,49 +4058,108 @@ void testGuiShellContract() {
 }
 
 int main() {
+    auto trace = [](const char* name) { std::fprintf(stderr, "[test] %s\n", name); };
+    trace("testNotes();");
     testNotes();
+    trace("testTrackerModel();");
     testTrackerModel();
+    trace("testRenderDemoSong();");
     testRenderDemoSong();
+    trace("testWavExport();");
     testWavExport();
+    trace("testTrackStemRendering();");
     testTrackStemRendering();
+    trace("testRealtimePlaybackContract();");
     testRealtimePlaybackContract();
+    trace("testSynthParameterSurface();");
     testSynthParameterSurface();
+    trace("testSynthStereoAndHeadroom();");
     testSynthStereoAndHeadroom();
+    trace("testSynthEnvelopeGateRelease();");
     testSynthEnvelopeGateRelease();
+    trace("testSynthNoteOffSustain();");
+    testSynthNoteOffSustain();
+    trace("testSequencerNoteOff();");
+    testSequencerNoteOff();
+    trace("testNoteOffStepRoundTrip();");
+    testNoteOffStepRoundTrip();
+    trace("testLegatoInput();");
+    testLegatoInput();
+    trace("testLayeredTimbreDsp();");
+    testLayeredTimbreDsp();
+    trace("testAudioProducerThreadContract();");
+    testAudioProducerThreadContract();
+    trace("testAudioRuntimeContract();");
     testAudioRuntimeContract();
+    trace("testApplicationSessionState();");
     testApplicationSessionState();
+    trace("testAppSettingsPersistence();");
     testAppSettingsPersistence();
+    trace("testPatchBrowserUxHelpers();");
+    testPatchBrowserUxHelpers();
+    trace("testScriptIntegrationSurface();");
     testScriptIntegrationSurface();
+    trace("testFileCompatibilityInspection();");
     testFileCompatibilityInspection();
+    trace("testExportWorkflow();");
     testExportWorkflow();
+    trace("testAutoSaveRecovery();");
     testAutoSaveRecovery();
+    trace("testProjectLifecyclePlanning();");
     testProjectLifecyclePlanning();
+    trace("testApplicationActionBridge();");
     testApplicationActionBridge();
+    trace("testApplicationTaskTracking();");
     testApplicationTaskTracking();
+    trace("testProjectRoundTrip();");
     testProjectRoundTrip();
+    trace("testMetadataCommands();");
     testMetadataCommands();
+    trace("testPatternEditorCommands();");
     testPatternEditorCommands();
+    trace("testSelectionClipboardAndUndo();");
     testSelectionClipboardAndUndo();
+    trace("testEditorActionRegistry();");
     testEditorActionRegistry();
+    trace("testEditorShortcutMap();");
     testEditorShortcutMap();
+    trace("testEditorCommandPalette();");
     testEditorCommandPalette();
+    trace("testStepAutomation();");
     testStepAutomation();
+    trace("testStepProbabilityAndRetrigger();");
     testStepProbabilityAndRetrigger();
+    trace("testStepEffects();");
     testStepEffects();
+    trace("testArrangementCommands();");
     testArrangementCommands();
+    trace("testTrackLifecycleCommands();");
     testTrackLifecycleCommands();
+    trace("testDeletionAndOrderCommands();");
     testDeletionAndOrderCommands();
+    trace("testInstrumentCommands();");
     testInstrumentCommands();
+    trace("testPatchRoundTrip();");
     testPatchRoundTrip();
+    trace("testCompositionalTransforms();");
     testCompositionalTransforms();
+    trace("testPatternView();");
     testPatternView();
+    trace("testEditorViewModel();");
     testEditorViewModel();
+    trace("testArrangementView();");
     testArrangementView();
+    trace("testProjectStats();");
     testProjectStats();
+    trace("testProjectDiagnostics();");
     testProjectDiagnostics();
+    trace("testMidiExport();");
     testMidiExport();
+    trace("testMidiImport();");
     testMidiImport();
+    trace("testMidiImportTempoMapAndProgramSplit();");
     testMidiImportTempoMapAndProgramSplit();
+    trace("testGuiShellContract();");
     testGuiShellContract();
     return 0;
 }

@@ -42,6 +42,7 @@ void resetMainDrawTransientState(const GuiMainDrawResetContext& context) {
     context.orderAppendButton = UiRect {};
     context.orderDeleteButton = UiRect {};
     context.stepAdvanceButton = UiRect {};
+    context.legatoButton = UiRect {};
     context.followPlaybackButton = UiRect {};
     context.instrumentListRect = UiRect {};
     context.instrumentBrowserListRect = UiRect {};

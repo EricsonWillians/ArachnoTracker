@@ -67,7 +67,9 @@ void cancelPromptFlowInlinePrompt(const GuiWindowPromptFlowContext& context) {
         GuiCancelInlinePromptContext {
             context.inlinePrompt,
             context.hasDeferredPostSaveAction,
-            context.clearInlinePrompt});
+            context.clearInlinePrompt,
+            context.unsavedPrompt,
+            context.deferredPostSaveAction});
 }
 
 void clearPromptFlowUnsavedPrompt(const GuiWindowPromptFlowContext& context) {

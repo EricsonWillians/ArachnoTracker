@@ -24,8 +24,15 @@ struct GuiMainRealtimeAudioContext {
     std::function<void()> closeAudioOutput;
     std::function<bool(const float*, const float*, int)> writeAudioOutput;
     std::function<void(int)> tuneRealtimeAudioForLoad;
+
+    // When true, a dedicated GuiAudioProducer thread renders blocks and the GUI
+    // skips the inline render loop (it still owns output open/close).
+    bool audioProducerActive = false;
 };
 
 void processMainRealtimeAudio(const GuiMainRealtimeAudioContext& context);
+// Renders queued blocks into the output queue. Runs on the GUI thread (inline
+// fallback) or on the dedicated producer thread; returns frames rendered.
+int renderMainRealtimeAudioBlocks(const GuiMainRealtimeAudioContext& context);
 
 } // namespace arachno

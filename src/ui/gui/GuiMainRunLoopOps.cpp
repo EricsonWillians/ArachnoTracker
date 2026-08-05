@@ -4,6 +4,9 @@ namespace arachno {
 
 void runMainLoopFromState(const GuiMainRunLoopContext& context) {
     while (context.running) {
+        if (context.syncArmedInstrument) {
+            context.syncArmedInstrument();
+        }
         pumpPendingMainEvents(
             GuiMainEventPumpContext {
                 context.display,
@@ -60,11 +63,14 @@ void runMainLoopFromState(const GuiMainRunLoopContext& context) {
                 context.synthTooltipParam,
                 context.synthTooltipHoverSince,
                 context.lastRefresh,
+                context.lastPlayheadPoll,
                 context.pollMidiInput,
                 context.processRealtimeAudio,
                 context.refreshSnapshot,
+                context.pollPlayhead,
                 context.drawMainWindow,
-                context.drawSynthWindow});
+                context.drawSynthWindow,
+                context.audioProducerActive});
     }
 }
 

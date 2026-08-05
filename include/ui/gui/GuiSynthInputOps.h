@@ -17,6 +17,7 @@ bool pollSynthMidiPreviewInput(
     std::array<bool, 128>& synthMidiPreviewHeld,
     bool synthWindowVisible,
     const std::function<void(int, float)>& auditionSynthPreviewMidiVelocity,
+    const std::function<void(int)>& noteOffSynthPreviewMidi,
     bool& synthWindowNeedsRedraw);
 
 } // namespace arachno

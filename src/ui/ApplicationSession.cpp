@@ -37,7 +37,10 @@ ApplicationSession::ApplicationSession(Song song, int sampleRate, AppSettings se
 
 AppOperationResult ApplicationSession::newProject(Song song) {
     try {
-        replaceSong(std::move(song), "", true);
+        // A fresh project starts clean: there is no unsaved work to lose yet.
+        // (Starting dirty made the very next open/new/close prompt the
+        // unsaved-changes dialog again even though nothing was edited.)
+        replaceSong(std::move(song), "", false);
         setMessage(AppMessageSeverity::Info, "Created new project");
         emitEvent(AppEventType::ProjectChanged, lastMessage_.text);
         return {true, lastMessage_.text, ""};
@@ -235,6 +238,10 @@ AppOperationResult ApplicationSession::clearSyncCheckpoint(const std::string& na
 }
 
 EditorCommandResult ApplicationSession::applyEditorCommand(const std::string& command) {
+    // Serializes song mutations against audio producer-thread block renders.
+    // Held for the whole command by design (mutations must be atomic vs render);
+    // heavy commands (fill-scale, resize) are user-initiated and rare.
+    const std::lock_guard<std::recursive_mutex> audioStateLock(audioStateMutex());
     EditorCommandResult result = editor_->tryApplyCommand(command);
     if (result.ok) {
         if (result.projectChanged) {
@@ -527,6 +534,8 @@ ScriptImportResult ApplicationSession::importScriptProject(const std::string& pa
 }
 
 ScriptImportResult ApplicationSession::importScriptPatch(const std::string& path, const std::string& nameOverride) {
+    // Mutates song_.instruments directly: serialize against audio producer renders.
+    const std::lock_guard<std::recursive_mutex> audioStateLock(audioStateMutex());
     ScriptImportResult result;
     result.type = ScriptArtifactType::Patch;
     result.path = path;
@@ -669,6 +678,15 @@ AuditionResult ApplicationSession::auditionCursorStep() {
 }
 
 AppSessionSnapshot ApplicationSession::snapshot(int gridStartRow, int gridRowCount) const {
+    // Deliberately NOT guarded by audioStateMutex(): holding it across this
+    // whole view-model build (tens of ms with many tracks, every ~240 ms during
+    // playback) stalled the audio producer thread and caused periodic output
+    // underruns. It is safe without the guard: playback_.snapshot() self-locks;
+    // song_/editor_ are only written on the GUI thread (already serialized
+    // there); the producer thread only reads song_ inside
+    // RealtimePlaybackSession::rebuildPreparedEvents (locked) — read-vs-read
+    // needs no exclusion. The audio-state mutex is for block renders and short
+    // mutations only, never for view-model builds.
     AppSessionSnapshot result;
     result.projectPath = projectPath_;
     result.hasProjectPath = !projectPath_.empty();
@@ -702,6 +720,7 @@ std::uint64_t ApplicationSession::lastEventSequence() const {
 }
 
 void ApplicationSession::replaceSong(Song song, const std::string& projectPath, bool dirty) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(audioStateMutex());
     ensureAtLeastOneInstrument(song);
     song_ = std::move(song);
     editor_ = std::make_unique<PatternEditorSession>(song_);

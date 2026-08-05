@@ -58,16 +58,12 @@ void paintNoteAt(
 
     armedInstrument = std::clamp(armedInstrument, 0, instrumentCount - 1);
     (void)moveCursor(context, row, track, false);
-    AppActionRequest inst;
-    inst.actionId = "editor.step.instrument";
-    inst.parameters = {{"index", std::to_string(armedInstrument)}};
-    (void)context.runAction(inst, false);
-
     AppActionRequest note;
     note.actionId = "editor.step.note";
     note.parameters = {
         {"note", midiNoteName(std::clamp(midiNote, 0, 127))},
-        {"velocity", velocityText(defaultVelocity)}};
+        {"velocity", velocityText(defaultVelocity)},
+        {"index", std::to_string(armedInstrument)}};
     const AppActionResult noteResult = context.runAction(note, false);
     if (noteResult.ok) {
         AppActionRequest preview;

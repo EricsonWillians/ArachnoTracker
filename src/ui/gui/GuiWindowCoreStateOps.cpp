@@ -59,6 +59,18 @@ void refreshSnapshotFromCoreState(GuiWindowCoreStateContext& context) {
             [&](int row) { ensureVisibleRowFromCoreState(context, row); }});
 }
 
+int pollPlayheadFromCoreState(GuiWindowCoreStateContext& context) {
+    return static_cast<int>(::arachno::pollPlayheadFromWindowState(
+        GuiPlayheadPollContext {
+            context.session,
+            context.snapshotResult,
+            context.requestedRowCount,
+            context.followPlayback,
+            context.manualScrollLockUntil,
+            context.selectedOrderIndex,
+            [&](int row) { ensureVisibleRowFromCoreState(context, row); }}));
+}
+
 AppActionResult runActionFromCoreState(
     GuiWindowCoreStateContext& context,
     const AppActionRequest& request,

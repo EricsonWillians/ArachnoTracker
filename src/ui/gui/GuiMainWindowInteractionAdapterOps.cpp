@@ -369,6 +369,7 @@ GuiMainButtonPressContextFactoryInput makeButtonPressFactoryInputFromWindowState
             context.patternRowsPlus,
             context.patternRowsValue,
             context.stepAdvanceButton,
+            context.legatoButton,
             context.followPlaybackButton,
             context.draggingPatternRows,
             context.patternResizeAnchorY,

@@ -30,18 +30,19 @@ GuiMainKeyNoteContext makeMainKeyNoteContextFromState(const GuiMainKeyNoteContex
             return static_cast<int>(snap.editor.instruments.size());
         },
         [state](int instrumentIndex, int midiNote, bool shouldStepAdvance) {
-            AppActionRequest inst;
-            inst.actionId = "editor.step.instrument";
-            inst.parameters = {{"index", std::to_string(instrumentIndex)}};
-            AppActionResult setInstrument = state.runActionWithRefresh(inst, true);
-            if (!setInstrument.ok) {
+            const AppSessionSnapshot snap = state.activeSnapshot();
+            const int count = static_cast<int>(snap.editor.instruments.size());
+            const int resolvedInstrument =
+                count <= 0 ? -1 : std::clamp(instrumentIndex, 0, count - 1);
+            if (resolvedInstrument < 0) {
                 return false;
             }
             AppActionRequest note;
             note.actionId = "editor.step.note";
             note.parameters = {
                 {"note", midiNoteName(midiNote)},
-                {"velocity", velocityText(state.defaultVelocity)}};
+                {"velocity", velocityText(state.defaultVelocity)},
+                {"index", std::to_string(resolvedInstrument)}};
             AppActionResult noteResult = state.runActionWithRefresh(note, true);
             if (!noteResult.ok) {
                 return false;
@@ -49,6 +50,22 @@ GuiMainKeyNoteContext makeMainKeyNoteContextFromState(const GuiMainKeyNoteContex
             AppActionRequest preview;
             preview.actionId = "preview.cursor";
             (void)state.runActionWithRefresh(preview, false);
+            if (shouldStepAdvance) {
+                const AppSessionSnapshot snap = state.activeSnapshot();
+                state.ensurePatternRowsForRow(snap.editor.status.cursorRow + 1);
+                AppActionRequest down;
+                down.actionId = "editor.navigation.down";
+                (void)state.runActionWithRefresh(down, true);
+            }
+            return true;
+        },
+        [state](bool shouldStepAdvance) {
+            AppActionRequest noteOff;
+            noteOff.actionId = "editor.step.noteoff";
+            AppActionResult noteOffResult = state.runActionWithRefresh(noteOff, true);
+            if (!noteOffResult.ok) {
+                return false;
+            }
             if (shouldStepAdvance) {
                 const AppSessionSnapshot snap = state.activeSnapshot();
                 state.ensurePatternRowsForRow(snap.editor.status.cursorRow + 1);

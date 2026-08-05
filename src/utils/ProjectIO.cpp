@@ -12,33 +12,6 @@
 namespace arachno {
 
 namespace {
-constexpr double kCompetitionPresetQualityProject = 0.82;
-constexpr double kCompetitionPresetQualityPercussiveProject = 0.76;
-
-bool looksLikePercussivePatch(const std::string& name) {
-    std::string lowerName;
-    lowerName.reserve(name.size());
-    for (unsigned char c : name) {
-        lowerName.push_back(static_cast<char>(std::tolower(c)));
-    }
-    constexpr const char* kPercussiveTokens[] = {
-        "kick",
-        "snare",
-        "hat",
-        "clap",
-        "tom",
-        "ride",
-        "rim",
-        "cym",
-        "shaker",
-        "drum",
-        "perc",
-        "noisehit"};
-
-    return std::any_of(std::begin(kPercussiveTokens), std::end(kPercussiveTokens), [&](const char* token) {
-        return lowerName.find(token) != std::string::npos;
-    });
-}
 
 void expectToken(std::istream& in, const std::string& expected) {
     std::string token;
@@ -303,6 +276,19 @@ void saveProject(const Song& song, const std::string& path) {
             << " " << patch.hifiExciter
             << " " << patch.outputTransformer
             << " " << patch.outputSoftClip
+            << " " << patch.portamentoTime
+            << " " << (patch.portamentoLegato ? 1.0 : 0.0)
+            << " " << patch.fmDecay
+            << " " << patch.velocityToFm
+            << " " << (patch.monoMode ? 1.0 : 0.0)
+            << " " << patch.oscBRatio
+            << " " << patch.oscCRatio
+            << " " << patch.oscDRatio
+            << " " << patch.oscBDecay
+            << " " << patch.oscCDecay
+            << " " << patch.oscDDecay
+            << " " << patch.velocityToDecay
+            << " " << patch.keyTrackDecay
             << "\n";
     }
 
@@ -347,7 +333,8 @@ void saveProject(const Song& song, const std::string& path) {
                     << " " << step.probability.value_or(1.0)
                     << " " << step.retriggerCount
                     << " " << step.retriggerSpacingRows
-                    << " " << step.retriggerVelocityDecay;
+                    << " " << step.retriggerVelocityDecay
+                    << " " << (step.noteOff ? 1 : 0);
                 out << "\n";
             }
         }
@@ -689,6 +676,46 @@ Song loadProject(const std::string& path) {
                 patch.outputTransformer = outputTransformer;
                 patch.outputSoftClip = outputSoftClip;
             }
+            double portamentoTime = patch.portamentoTime;
+            double portamentoLegato = patch.portamentoLegato ? 1.0 : 0.0;
+            if (extraIn >> portamentoTime) {
+                patch.portamentoTime = portamentoTime;
+                if (extraIn >> portamentoLegato) {
+                    patch.portamentoLegato = portamentoLegato >= 0.5;
+                }
+            }
+            double fmDecay = patch.fmDecay;
+            double velocityToFm = patch.velocityToFm;
+            double monoMode = patch.monoMode ? 1.0 : 0.0;
+            if (extraIn >> fmDecay) {
+                patch.fmDecay = fmDecay;
+                if (extraIn >> velocityToFm) {
+                    patch.velocityToFm = velocityToFm;
+                    if (extraIn >> monoMode) {
+                        patch.monoMode = monoMode >= 0.5;
+                    }
+                }
+            }
+            double oscBRatio = patch.oscBRatio;
+            double oscCRatio = patch.oscCRatio;
+            double oscDRatio = patch.oscDRatio;
+            double oscBDecay = patch.oscBDecay;
+            double oscCDecay = patch.oscCDecay;
+            double oscDDecay = patch.oscDDecay;
+            double velocityToDecay = patch.velocityToDecay;
+            double keyTrackDecay = patch.keyTrackDecay;
+            if (extraIn >> oscBRatio >> oscCRatio >> oscDRatio
+                >> oscBDecay >> oscCDecay >> oscDDecay
+                >> velocityToDecay >> keyTrackDecay) {
+                patch.oscBRatio = oscBRatio;
+                patch.oscCRatio = oscCRatio;
+                patch.oscDRatio = oscDRatio;
+                patch.oscBDecay = oscBDecay;
+                patch.oscCDecay = oscCDecay;
+                patch.oscDDecay = oscDDecay;
+                patch.velocityToDecay = velocityToDecay;
+                patch.keyTrackDecay = keyTrackDecay;
+            }
         }
         patch.oscillatorC = waveformFromIndex(oscCIndex);
         patch.oscillatorD = waveformFromIndex(oscDIndex);
@@ -703,12 +730,9 @@ Song loadProject(const std::string& path) {
         patch.hardSyncEnabled = hardSyncEnabled >= 0.5;
         patch.chorusEnabled = chorusEnabled >= 0.5;
         patch.bitCrushEnabled = bitCrushEnabled >= 0.5;
-        applyCompetitionPresetQuality(
-            patch,
-            looksLikePercussivePatch(patch.name)
-                ? kCompetitionPresetQualityPercussiveProject
-                : kCompetitionPresetQualityProject,
-            looksLikePercussivePatch(patch.name));
+        // Load paths must be transparent (save->load->save = identity).
+        // applyCompetitionPresetQuality is a creation-time polish only (demo songs,
+        // MIDI import); it is intentionally NOT applied here so projects round-trip exactly.
         song.instruments.push_back(instrument);
     }
 
@@ -775,6 +799,10 @@ Song loadProject(const std::string& path) {
                 extraIn >> step.retriggerCount
                     >> step.retriggerSpacingRows
                     >> step.retriggerVelocityDecay;
+                int noteOff = 0;
+                if (extraIn >> noteOff) {
+                    step.noteOff = noteOff != 0;
+                }
             }
         }
         song.patterns.push_back(pattern);

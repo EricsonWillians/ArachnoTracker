@@ -49,6 +49,7 @@ struct GuiMainSidebarDrawContext {
     UiRect& patternRowsValue;
     UiRect& patternRowsPlus;
     UiRect& stepAdvanceButton;
+    UiRect& legatoButton;
     UiRect& followPlaybackButton;
     std::vector<TrackMetadataHit>& trackMetadataHits;
     std::vector<SongLengthHit>& songLengthHits;

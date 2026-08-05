@@ -7,6 +7,8 @@
 #include <cstring>
 #include <cstdlib>
 #include <sstream>
+
+#include "SpikeLog.h"
 #if defined(__linux__)
 #include <pthread.h>
 #endif
@@ -127,6 +129,13 @@ void GuiAudioRuntime::setPerformanceMode(AudioPerformanceMode mode, int sampleRa
     audioPerformanceMode_ = mode;
     audioLoadClass_ = -1;
     lastAudioTuning_ = std::chrono::steady_clock::time_point {};
+#if ARACHNO_HAS_ALSA
+    // Explicit re-tune resets the BT latency escalation back to the live
+    // default (unless ARACHNO_ALSA_LATENCY_MS pins it).
+    if (!alsaLatencyOverride_) {
+        alsaLatencyUs_.store(20000, std::memory_order_relaxed);
+    }
+#endif
     tuneForLoad(sampleRate, audibleTracks);
 }
 
@@ -171,6 +180,7 @@ void GuiAudioRuntime::addOutputPressure(int amount) {
 }
 
 void GuiAudioRuntime::close() {
+    const std::lock_guard<std::recursive_mutex> lifecycleLock(audioLifecycleMutex_);
     stopPipeWriterThread();
 #if ARACHNO_HAS_ALSA
     {
@@ -211,6 +221,7 @@ void GuiAudioRuntime::close() {
 }
 
 bool GuiAudioRuntime::open(int sampleRate) {
+    const std::lock_guard<std::recursive_mutex> lifecycleLock(audioLifecycleMutex_);
     close();
     if (sampleRate <= 0) {
         return false;
@@ -226,6 +237,13 @@ bool GuiAudioRuntime::open(int sampleRate) {
     const bool forceAlsa = forcedOutput == "alsa";
 
 #if ARACHNO_HAS_ALSA
+    if (const char* env = std::getenv("ARACHNO_ALSA_LATENCY_MS"); env != nullptr && env[0] != '\0') {
+        const long value = std::strtol(env, nullptr, 10);
+        if (value >= 5 && value <= 250) {
+            alsaLatencyUs_.store(static_cast<unsigned int>(value) * 1000, std::memory_order_relaxed);
+            alsaLatencyOverride_ = true;
+        }
+    }
     auto tryOpenAlsa = [&](bool useFloat) -> bool {
         snd_pcm_t* pcm = nullptr;
         const int openResult = snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
@@ -234,7 +252,11 @@ bool GuiAudioRuntime::open(int sampleRate) {
         }
         snd_pcm_nonblock(pcm, 0);
         const snd_pcm_format_t format = useFloat ? SND_PCM_FORMAT_FLOAT_LE : SND_PCM_FORMAT_S16_LE;
-        constexpr unsigned int latencyUs = 100000;
+        // Adaptive device latency: 20 ms default (responsive for live playing);
+        // escalates on measured xrun streaks (see the writer thread) because
+        // bursty downstream pulls — the PipeWire Bluetooth leg — starve a
+        // small ring no matter how healthy the app-side queue is.
+        const unsigned int latencyUs = alsaLatencyUs_.load(std::memory_order_relaxed);
         const int paramResult = snd_pcm_set_params(
             pcm,
             format,
@@ -370,6 +392,7 @@ bool GuiAudioRuntime::open(int sampleRate) {
 }
 
 bool GuiAudioRuntime::write(const float* left, const float* right, int frames) {
+    const std::lock_guard<std::recursive_mutex> lifecycleLock(audioLifecycleMutex_);
     if (frames <= 0) {
         return false;
     }
@@ -494,12 +517,12 @@ bool GuiAudioRuntime::startPipeWriterThread(int sampleRate) {
     stopPipeWriterThread();
     {
         std::lock_guard<std::mutex> lock(audioPipeMutex_);
-        const int queueFrames = std::max(sampleRate / 2, 12288);
+        const int queueFrames = std::max(sampleRate / 10, 8192);
         audioPipeQueueCapacity_ = static_cast<std::size_t>(queueFrames) * 2;
         audioPipeQueue_.assign(audioPipeQueueCapacity_, 0.0f);
         audioPipeQueueRead_ = 0;
         audioPipeQueueSize_ = 0;
-        audioPipeChunkSamples_ = static_cast<std::size_t>(std::clamp(sampleRate / 128, 256, 2048)) * 2;
+        audioPipeChunkSamples_ = static_cast<std::size_t>(std::clamp(sampleRate / 256, 256, 2048)) * 2;
         audioPipeThreadStop_ = false;
         audioPipeHealthy_ = true;
         audioPipeThreadRunning_ = true;
@@ -707,10 +730,11 @@ bool GuiAudioRuntime::enqueuePipeFrames(const float* left, const float* right, i
 void GuiAudioRuntime::resetAlsaQueue(int sampleRate) {
     audioAlsaQueueRead_ = 0;
     audioAlsaQueueSize_ = 0;
-    const int queueFrames = std::max(12288, sampleRate / 2);
+    const int queueFrames = std::max(8192, sampleRate / 10);
     audioAlsaQueueCapacity_ = static_cast<std::size_t>(queueFrames) * 2;
     audioAlsaQueue_.assign(audioAlsaQueueCapacity_, 0.0f);
-    audioAlsaStartThresholdSamples_ = static_cast<std::size_t>(std::clamp(sampleRate / 8, 1024, 8192)) * 2;
+    // Prime with ~15 ms of audio (was ~125 ms) so live playing feels immediate.
+    audioAlsaStartThresholdSamples_ = static_cast<std::size_t>(std::clamp(sampleRate / 64, 512, 2048)) * 2;
     audioAlsaChunkSamples_ = static_cast<std::size_t>(std::clamp(sampleRate / 128, 256, 2048)) * 2;
 }
 
@@ -720,7 +744,12 @@ void GuiAudioRuntime::tuneAlsaQueueForLoad(int sampleRate, int loadClass) {
     }
     const int startFrames = loadClass <= 0 ? 2048 : (loadClass == 1 ? 3072 : 4096);
     const int chunkFrames = loadClass <= 0 ? 384 : (loadClass == 1 ? 512 : 768);
-    const std::size_t desiredStartSamples = static_cast<std::size_t>(std::clamp(startFrames, 512, 8192)) * 2;
+    // Cap the stream-start prime at ~21 ms: higher primes made every live note
+    // wait 85 ms+ (heavy mode) before sounding — violating the
+    // "live playing must stay immediate" contract. Chunk sizing still scales
+    // with load; only the initial-prime inflation is capped.
+    const int cappedStartFrames = std::min(startFrames, 1024);
+    const std::size_t desiredStartSamples = static_cast<std::size_t>(std::clamp(cappedStartFrames, 512, 8192)) * 2;
     const std::size_t desiredChunkSamples = static_cast<std::size_t>(std::clamp(chunkFrames, 256, 3072)) * 2;
     std::lock_guard<std::mutex> lock(audioAlsaMutex_);
     audioAlsaStartThresholdSamples_ = std::min(desiredStartSamples, audioAlsaQueueCapacity_);
@@ -808,10 +837,12 @@ bool GuiAudioRuntime::startAlsaWriterThread(int sampleRate) {
         chunkS16.reserve(maxChunkSamples);
         bool primed = false;
         int starvationSpins = 0;
+        int xrunStreak = 0;
         float concealLeft = 0.0f;
         float concealRight = 0.0f;
 
         auto writeFramesToPcm = [&](const void* data, int frames) -> bool {
+            bool sawXrunThisCall = false;
             int offset = 0;
             while (offset < frames) {
                 const snd_pcm_sframes_t written = snd_pcm_writei(
@@ -829,15 +860,36 @@ bool GuiAudioRuntime::startAlsaWriterThread(int sampleRate) {
                     continue;
                 }
                 if (written == -EPIPE || written == -ESTRPIPE) {
+                    sawXrunThisCall = true;
                     if (snd_pcm_prepare(audioPcm_) < 0) {
                         return false;
                     }
                     primed = false;
                     outputXrunRecoveries_.fetch_add(1, std::memory_order_relaxed);
                     addOutputPressure(22);
+                    // Escalate device latency on an xrun STREAK (3 in a row):
+                    // bursty downstream pulls (PipeWire Bluetooth leg) starve a
+                    // 20 ms ring no matter how healthy the app-side queue is; a
+                    // larger ring absorbs the burst cadence. The unhealthy flag
+                    // routes through the existing close()+reopen path, which
+                    // picks up the escalated latency. Measured-signal only — a
+                    // clean wired sink never escalates.
+                    ++xrunStreak;
+                    if (!alsaLatencyOverride_ && xrunStreak >= 3) {
+                        const unsigned int current = alsaLatencyUs_.load(std::memory_order_relaxed);
+                        if (current < 96000) {
+                            const unsigned int next = std::min(96000u, std::max(48000u, current * 2));
+                            alsaLatencyUs_.store(next, std::memory_order_relaxed);
+                            logSpike("alsa-latency-up", next / 1000.0, "xrun streak: reopening with larger device ring");
+                            return false;
+                        }
+                    }
                     continue;
                 }
                 return false;
+            }
+            if (!sawXrunThisCall) {
+                xrunStreak = 0;
             }
             return true;
         };
@@ -847,23 +899,37 @@ bool GuiAudioRuntime::startAlsaWriterThread(int sampleRate) {
             {
                 std::unique_lock<std::mutex> lock(audioAlsaMutex_);
                 const std::size_t startThreshold = std::max<std::size_t>(2, audioAlsaStartThresholdSamples_);
-                const std::size_t sustainThreshold = std::max<std::size_t>(2, audioAlsaChunkSamples_ / 3);
+                // Re-prime after true starvation needs far less than the initial
+                // start threshold: the device itself holds ~20 ms. Capping the
+                // re-prime at 2 chunks avoids the old 85 ms silence gaps (heavy
+                // mode) after every queue dip.
+                const std::size_t rePrimeThreshold = std::min(
+                    startThreshold,
+                    std::max<std::size_t>(2, audioAlsaChunkSamples_ * 2));
                 const bool wokeWithAudio = audioAlsaCv_.wait_for(lock, std::chrono::milliseconds(12), [&]() {
-                    return audioAlsaThreadStop_ || audioAlsaQueueSize_ >= (primed ? sustainThreshold : startThreshold);
+                    // Once primed, stream ANY available audio (>= 1 frame) instead
+                    // of waiting for a sustain threshold — partial audio beats
+                    // silence, and the concealment path covers true droughts.
+                    return audioAlsaThreadStop_ || audioAlsaQueueSize_ >= (primed ? 2 : rePrimeThreshold);
                 });
                 if (audioAlsaThreadStop_ && audioAlsaQueueSize_ < 2) {
                     break;
                 }
                 const std::size_t requestedChunk = std::max<std::size_t>(2, audioAlsaChunkSamples_);
                 if (!wokeWithAudio && primed) {
-                    // Conceal only after repeated starvation waits; otherwise keep waiting for real data.
+                    // Conceal on the FIRST starved timeout (~12 ms): the device
+                    // buffer is only ~20 ms, so waiting longer guarantees an
+                    // xrun. The old 8-spin (96 ms) delay never prevented the
+                    // underrun it existed to mask — every concealment arrived
+                    // after the device had already run dry and recovered with a
+                    // full re-prime gap (the "random stutter" limit cycle).
                     ++starvationSpins;
-                    if (starvationSpins < 8) {
+                    if (starvationSpins < 1) {
                         continue;
                     }
                     const std::size_t concealSamples = std::min(
                         maxChunkSamples,
-                        std::max<std::size_t>(2, std::min(requestedChunk, sustainThreshold)));
+                        std::max<std::size_t>(2, requestedChunk));
                     chunkFloat.resize(concealSamples);
                     float localLeft = concealLeft;
                     float localRight = concealRight;
@@ -904,9 +970,11 @@ bool GuiAudioRuntime::startAlsaWriterThread(int sampleRate) {
                     }
                     audioAlsaQueueRead_ = (audioAlsaQueueRead_ + toCopy) % audioAlsaQueueCapacity_;
                     audioAlsaQueueSize_ -= toCopy;
-                    if (audioAlsaQueueSize_ < (startThreshold / 3)) {
-                        primed = false;
-                    }
+                    // Stay primed even when the queue runs low: the next wait
+                    // accepts any available audio, and true emptiness is handled
+                    // by the re-prime path above. (Unpriming at startThreshold/3
+                    // caused repeated 46-93 ms re-prime silences — a limit cycle
+                    // audible as random stutter under load.)
                     if (toCopy >= 2) {
                         concealLeft = chunkFloat[toCopy - 2];
                         concealRight = chunkFloat[toCopy - 1];

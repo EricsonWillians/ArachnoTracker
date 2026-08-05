@@ -22,7 +22,6 @@ void refreshSnapshotFromWindowState(const GuiSnapshotRefreshContext& context) {
             context.followPlayback && std::chrono::steady_clock::now() >= context.manualScrollLockUntil;
         if (autoFollowAllowed
             && snap.playback.state == TransportState::Playing
-            && !snap.playback.loop.enabled
             && snap.playback.position.pattern >= 0
             && snap.playback.position.pattern < static_cast<int>(snap.editor.patterns.size())
             && snap.playback.position.pattern != snap.editor.status.activePattern) {
@@ -39,7 +38,6 @@ void refreshSnapshotFromWindowState(const GuiSnapshotRefreshContext& context) {
         if (orderCount <= 0) {
             context.selectedOrderIndex = 0;
         } else if (snap.playback.state == TransportState::Playing
-            && !snap.playback.loop.enabled
             && snap.playback.position.orderIndex >= 0
             && snap.playback.position.orderIndex < orderCount) {
             context.selectedOrderIndex = snap.playback.position.orderIndex;
@@ -78,6 +76,57 @@ void refreshSnapshotFromWindowState(const GuiSnapshotRefreshContext& context) {
         }
         context.viewStartRow = clamped;
     }
+}
+
+GuiPlayheadPollResult pollPlayheadFromWindowState(const GuiPlayheadPollContext& context) {
+    if (!context.snapshotResult.hasSessionSnapshot) {
+        return GuiPlayheadPollResult::Unchanged;
+    }
+    AppSessionSnapshot& snap = context.snapshotResult.sessionSnapshot;
+    // Cheap: transport snapshot only, no editor view-model rebuild.
+    const PlaybackSnapshot playback = context.session.playback().snapshot();
+    const bool changed = playback.state != snap.playback.state
+        || playback.position.pattern != snap.playback.position.pattern
+        || playback.position.patternRow != snap.playback.position.patternRow
+        || playback.position.orderIndex != snap.playback.position.orderIndex
+        || playback.position.absoluteRow != snap.playback.position.absoluteRow;
+    if (!changed) {
+        return GuiPlayheadPollResult::Unchanged;
+    }
+    snap.playback = playback;
+
+    const bool autoFollowAllowed =
+        context.followPlayback && std::chrono::steady_clock::now() >= context.manualScrollLockUntil;
+    if (autoFollowAllowed
+        && snap.playback.state == TransportState::Playing
+        && snap.playback.position.pattern >= 0
+        && snap.playback.position.pattern < static_cast<int>(snap.editor.patterns.size())
+        && snap.playback.position.pattern != snap.editor.status.activePattern) {
+        AppActionRequest followPattern;
+        followPattern.actionId = "editor.navigation.pattern";
+        followPattern.parameters = {{"index", std::to_string(snap.playback.position.pattern)}};
+        const AppActionResult followResult = executeAppAction(context.session, followPattern);
+        if (followResult.ok) {
+            return GuiPlayheadPollResult::FullRefresh;
+        }
+    }
+
+    const int orderCount = static_cast<int>(snap.editor.order.size());
+    if (orderCount > 0
+        && snap.playback.state == TransportState::Playing
+        && snap.playback.position.orderIndex >= 0
+        && snap.playback.position.orderIndex < orderCount) {
+        context.selectedOrderIndex = snap.playback.position.orderIndex;
+    }
+
+    if (autoFollowAllowed) {
+        const int focusRow = (snap.playback.state == TransportState::Playing
+                && snap.playback.position.pattern == snap.editor.status.activePattern)
+            ? snap.playback.position.patternRow
+            : snap.editor.status.cursorRow;
+        context.ensureVisible(std::max(0, focusRow));
+    }
+    return GuiPlayheadPollResult::Redraw;
 }
 
 void beginInlinePromptFromWindowState(
@@ -119,7 +168,18 @@ void clearInlinePromptFromWindowState(const GuiClearInlinePromptContext& context
 
 void cancelInlinePromptFromWindowState(const GuiCancelInlinePromptContext& context) {
     if (context.inlinePrompt.active && context.inlinePrompt.kind == InlinePromptKind::SaveProjectPath) {
-        context.hasDeferredPostSaveAction = false;
+        if (context.hasDeferredPostSaveAction) {
+            // Cancelling the save-as step must not silently drop the pending
+            // lifecycle action (open/new/close): return to the unsaved-changes
+            // decision so the user can still discard or cancel.
+            context.unsavedPrompt.active = true;
+            context.unsavedPrompt.request = context.deferredPostSaveAction;
+            if (context.unsavedPrompt.title.empty()) {
+                context.unsavedPrompt.title = "Unsaved changes";
+                context.unsavedPrompt.detail = "Save changes before continuing?";
+            }
+            context.hasDeferredPostSaveAction = false;
+        }
     }
     context.clearInlinePrompt();
 }

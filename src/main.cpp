@@ -13,6 +13,7 @@
 #include "EditorShortcuts.h"
 #include "Exporter.h"
 #include "GUI.h"
+#include "GmPresetBank.h"
 #include "MidiImporter.h"
 #include "MidiExporter.h"
 #include "PatchIO.h"
@@ -50,12 +51,13 @@ void printUsage() {
         << "  ArachnoTracker --export-patch <project.arachno> <instrument> <patch.arachnopatch>\n"
         << "  ArachnoTracker --import-patch <input.arachno> <output.arachno> <patch.arachnopatch> [name]\n"
         << "  ArachnoTracker --replace-patch <input.arachno> <output.arachno> <instrument> <patch.arachnopatch> [name]\n"
+        << "  ArachnoTracker --write-gm-presets <output-dir>   # export the 128-preset GM bank as .arachnopatch files\n"
         << "  ArachnoTracker --show <project.arachno> [pattern] [start-row] [rows]\n"
         << "  ArachnoTracker --edit <input.arachno> <output.arachno> <command>...\n"
         << "  ArachnoTracker --edit-file <input.arachno> <output.arachno> <commands.txt>\n"
         << "  ArachnoTracker --interactive <input.arachno> <output.arachno>\n"
         << "  ArachnoTracker --info\n\n"
-        << "Editor commands: pattern N, move ROW TRACK, up/down/left/right [N], note C4 [VEL], inst N, gate ROWS,\n"
+        << "Editor commands: pattern N, move ROW TRACK, up/down/left/right [N], note C4 [VEL], inst N, gate ROWS, legato [on|off|toggle],\n"
         << "                 select ROW TRACK ROWS TRACKS, copy, cut, paste [ROW] [TRACK], clear-selection,\n"
         << "                 undo, redo,\n"
         << "                 transpose N [track], octave N, fill-scale TRACK START COUNT STRIDE ROOT SCALE INST [VEL] [GATE],\n"
@@ -369,6 +371,31 @@ int main(int argc, char** argv) {
             for (const arachno::MidiImportWarning& warning : report.warnings) {
                 std::cout << "warning: " << warning.message << "\n";
             }
+            return 0;
+        }
+
+        if (std::string(argv[1]) == "--write-gm-presets") {
+            if (argc < 3) {
+                std::cerr << "--write-gm-presets requires an output directory\n";
+                return 2;
+            }
+            const std::filesystem::path outDir(argv[2]);
+            std::filesystem::create_directories(outDir);
+            for (int program = 0; program < 128; ++program) {
+                arachno::SynthPatch patch = arachno::gmPresetForProgram(program, 60.0);
+                const std::string fileName = (program < 10 ? "00" : (program < 100 ? "0" : ""))
+                    + std::to_string(program) + "_"
+                    + [&] {
+                        std::string slug = arachno::gmProgramName(program);
+                        for (char& c : slug) {
+                            c = (c == ' ' || c == '(' || c == ')' || c == '+') ? '_' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        }
+                        return slug;
+                    }()
+                    + ".arachnopatch";
+                arachno::savePatch(patch, (outDir / fileName).string());
+            }
+            std::cout << "Wrote 128 GM presets to " << outDir.string() << "\n";
             return 0;
         }
 

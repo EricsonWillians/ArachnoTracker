@@ -74,6 +74,7 @@ GuiMainSidebarClickContext makeMainSidebarClickContextForButtonPress(
             state.patternRowsPlus,
             state.patternRowsValue,
             state.stepAdvanceButton,
+            state.legatoButton,
             state.followPlaybackButton,
             state.draggingPatternRows,
             state.patternResizeAnchorY,

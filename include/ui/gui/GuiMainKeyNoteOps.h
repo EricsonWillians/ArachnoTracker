@@ -36,6 +36,7 @@ struct GuiMainKeyNoteContext {
     std::function<void(int)> selectInstrument;
     std::function<int()> instrumentCount;
     std::function<bool(int, int, bool)> applyTrackerNoteAtCursor;
+    std::function<bool(bool)> applyTrackerNoteOffAtCursor;
 };
 
 GuiMainKeyNoteResult handleMainKeyNoteOps(const GuiMainKeyNoteContext& context);

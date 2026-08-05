@@ -15,7 +15,9 @@ Primary targets:
   - Core Python data model mirroring tracker entities.
 
 - `io.py`
-  - Read/write for project and patch formats.
+  - Read/write for project and patch formats. Writes the modern
+    `arachno_patch 2` 159-value patch layout and reads every historical layout
+    (legacy 32-value files through current C++ v2 files).
 
 - `notes.py`
   - Note naming and pitch helpers.

@@ -13,33 +13,6 @@
 namespace arachno {
 
 namespace {
-constexpr double kCompetitionPresetQualityProject = 0.82;
-constexpr double kCompetitionPresetQualityPercussiveProject = 0.76;
-
-bool looksLikePercussivePatch(const std::string& name) {
-    std::string lowerName;
-    lowerName.reserve(name.size());
-    for (unsigned char c : name) {
-        lowerName.push_back(static_cast<char>(std::tolower(c)));
-    }
-    constexpr const char* kPercussiveTokens[] = {
-        "kick",
-        "snare",
-        "hat",
-        "clap",
-        "tom",
-        "ride",
-        "rim",
-        "cym",
-        "shaker",
-        "drum",
-        "perc",
-        "noisehit"};
-
-    return std::any_of(std::begin(kPercussiveTokens), std::end(kPercussiveTokens), [&](const char* token) {
-        return lowerName.find(token) != std::string::npos;
-    });
-}
 
 void expectToken(std::istream& in, const std::string& expected) {
     std::string token;
@@ -227,6 +200,19 @@ void savePatch(const SynthPatch& patch, const std::string& path) {
         << " " << patch.filterNonlinearity
         << " " << patch.ampEnvelopeCurve
         << " " << patch.filterEnvelopeCurve
+        << " " << patch.portamentoTime
+        << " " << (patch.portamentoLegato ? 1.0 : 0.0)
+        << " " << patch.fmDecay
+        << " " << patch.velocityToFm
+        << " " << (patch.monoMode ? 1.0 : 0.0)
+        << " " << patch.oscBRatio
+        << " " << patch.oscCRatio
+        << " " << patch.oscDRatio
+        << " " << patch.oscBDecay
+        << " " << patch.oscCDecay
+        << " " << patch.oscDDecay
+        << " " << patch.velocityToDecay
+        << " " << patch.keyTrackDecay
         << "\n";
     out << "amp"
         << " " << patch.ampEnvelope.attack
@@ -446,6 +432,25 @@ SynthPatch loadPatch(const std::string& path) {
                         patch.filterNonlinearity = params[143];
                         patch.ampEnvelopeCurve = static_cast<int>(std::lround(params[144]));
                         patch.filterEnvelopeCurve = static_cast<int>(std::lround(params[145]));
+                        if (params.size() >= 148) {
+                            patch.portamentoTime = params[146];
+                            patch.portamentoLegato = params[147] >= 0.5;
+                            if (params.size() >= 151) {
+                                patch.fmDecay = params[148];
+                                patch.velocityToFm = params[149];
+                                patch.monoMode = params[150] >= 0.5;
+                                if (params.size() >= 159) {
+                                    patch.oscBRatio = params[151];
+                                    patch.oscCRatio = params[152];
+                                    patch.oscDRatio = params[153];
+                                    patch.oscBDecay = params[154];
+                                    patch.oscCDecay = params[155];
+                                    patch.oscDDecay = params[156];
+                                    patch.velocityToDecay = params[157];
+                                    patch.keyTrackDecay = params[158];
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -837,12 +842,9 @@ SynthPatch loadPatch(const std::string& path) {
     patch.filterEnvelope.release = readValue<double>(in, "filter release");
 
     expectToken(in, "end_patch");
-    applyCompetitionPresetQuality(
-        patch,
-        looksLikePercussivePatch(patch.name)
-            ? kCompetitionPresetQualityPercussiveProject
-            : kCompetitionPresetQualityProject,
-        looksLikePercussivePatch(patch.name));
+    // Load paths must be transparent (save->load->save = identity).
+    // applyCompetitionPresetQuality is a creation-time polish only (demo songs, MIDI import);
+    // it is intentionally NOT applied here so saved patches round-trip exactly.
     return patch;
 }
 

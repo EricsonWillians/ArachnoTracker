@@ -290,6 +290,21 @@ void drawMainTopPanelSection(const GuiMainTopPanelDrawContext& context) {
                           << "dB";
                 telemetry << "  U " << std::max(0, context.snapshot.audio.underrunCount);
                 telemetry << "  " << synthTierLabel(context.playback.synth.qualityTier);
+                // Producer liveness + queue health: distinguishes producer
+                // stalls (s), backpressure (c), and device-side xruns (x).
+                telemetry << (context.audioRuntime.producerActive() ? "  P-THR" : "  P-GUI");
+                telemetry << "  s" << context.audioRuntime.outputStarvationEvents()
+                          << "/c" << context.audioRuntime.outputCongestionEvents()
+                          << "/x" << context.audioRuntime.outputXrunRecoveries();
+                // ALSA device latency: shown when escalated above the 20 ms
+                // live default (BT mitigation), so the trade-off is visible.
+                if (context.audioRuntime.alsaLatencyMs() != 20) {
+                    telemetry << "  AL" << context.audioRuntime.alsaLatencyMs() << "ms";
+                }
+                if (context.audioRuntime.outputStarvationEvents() > 0
+                    || context.audioRuntime.outputXrunRecoveries() > 0) {
+                    telemetryColor = context.colorCursor;
+                }
                 const auto [queued, capacity] = context.audioRuntime.alsaQueueUsage();
                 if (context.audioRuntime.usesAlsa() && capacity > 0) {
                     const int queuePct = static_cast<int>((queued * 100) / capacity);
@@ -594,9 +609,16 @@ void drawMainTopPanelSection(const GuiMainTopPanelDrawContext& context) {
     std::ostringstream status;
     status << "Project: " << (context.snapshot.hasProjectPath ? context.snapshot.projectPath : "<untitled>")
            << "  Dirty: " << (context.snapshot.dirty ? "yes" : "no")
-           << "  Playback: " << playbackState
-           << "  Row: " << context.snapshot.playback.position.patternRow
-           << "  Pattern: " << context.snapshot.playback.position.pattern;
+           << "  Playback: " << playbackState;
+    const auto& playbackPosition = context.snapshot.playback.position;
+    const int playbackOrderCount = static_cast<int>(context.snapshot.editor.order.size());
+    if (playbackPosition.validPattern && playbackPosition.pattern >= 0) {
+        status << "  Ord: " << (playbackPosition.orderIndex + 1) << "/" << playbackOrderCount
+               << "  Pat: " << playbackPosition.pattern
+               << "  Row: " << (playbackPosition.patternRow + 1);
+    } else {
+        status << "  Ord: -  Pat: -  Row: -";
+    }
     printLine(status.str());
 
     std::ostringstream cursor;

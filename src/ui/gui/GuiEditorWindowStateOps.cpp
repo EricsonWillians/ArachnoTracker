@@ -82,7 +82,8 @@ void resizePatternRowsFromWindowState(
 void setArmedOctaveFromWindowState(int octave, int& armedOctave, int& paintNoteMidi) {
     armedOctave = std::clamp(octave, 0, 8);
     const int pitchClass = std::clamp(paintNoteMidi, 0, 127) % 12;
-    paintNoteMidi = std::clamp((armedOctave * 12) + pitchClass, 0, 127);
+    // Display convention (midiNoteName: 60 = C4): armed octave N maps C to (N + 1) * 12.
+    paintNoteMidi = std::clamp(((armedOctave + 1) * 12) + pitchClass, 0, 127);
 }
 
 void applyArmedOctaveToSelectionFromWindowState(

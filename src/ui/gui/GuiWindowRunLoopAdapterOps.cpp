@@ -1,5 +1,14 @@
 #include "ui/gui/GuiWindowRunLoopAdapterOps.h"
 
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <system_error>
+
+#include "AppSettings.h"
+#include "PatchIO.h"
+#include "ui/gui/GuiFileBrowserOps.h"
+#include "ui/gui/GuiPathDefaults.h"
 #include "ui/gui/GuiMainGridClickOps.h"
 #include "ui/gui/GuiMainKeyCommandOps.h"
 #include "ui/gui/GuiMainKeyEditOps.h"
@@ -17,6 +26,75 @@ namespace arachno {
 void runMainLoopFromAdapter(const GuiWindowRunLoopAdapterContext& context) {
     auto pollMidiInput = [&]() {
         return pollSynthMidiInputFromWindowState(context.synthInteractionContext);
+    };
+
+    // Patch browser UX poll: remembers the last used patch folder across launches and
+    // auditions the highlighted patch file as the browser selection moves.
+    std::string lastPatchDirectory;
+    try {
+        lastPatchDirectory = loadAppSettings(defaultSettingsPath().string()).browser.lastPatchDirectory;
+    } catch (const std::exception&) {
+        lastPatchDirectory.clear();
+    }
+    bool patchPromptWasActive = false;
+    std::string lastPatchPreviewValue;
+    auto pollPatchBrowserUx = [&]() {
+        auto& ux = context.synthInteractionContext;
+        const bool patchPromptActive = ux.inlinePrompt.active
+            && inlinePromptKindIsPatch(ux.inlinePrompt.kind);
+        if (!patchPromptActive) {
+            patchPromptWasActive = false;
+            lastPatchPreviewValue.clear();
+            return false;
+        }
+        bool changed = false;
+        if (!patchPromptWasActive) {
+            patchPromptWasActive = true;
+            lastPatchPreviewValue = ux.inlinePrompt.value;
+            if (!lastPatchDirectory.empty()) {
+                std::error_code ec;
+                if (std::filesystem::is_directory(std::filesystem::path(lastPatchDirectory), ec) && !ec) {
+                    ux.fileBrowserDirectory = std::filesystem::path(lastPatchDirectory);
+                    ux.inlinePrompt.value = ux.fileBrowserDirectory.string();
+                    ux.refreshFileBrowserEntries();
+                    changed = true;
+                }
+            }
+        }
+        const std::string currentDir = ux.fileBrowserDirectory.string();
+        if (!currentDir.empty() && currentDir != lastPatchDirectory) {
+            lastPatchDirectory = currentDir;
+        }
+        if (inlinePromptKindPreviewsPatchFile(ux.inlinePrompt.kind)
+            && ux.inlinePrompt.value != lastPatchPreviewValue) {
+            lastPatchPreviewValue = ux.inlinePrompt.value;
+            const std::filesystem::path candidate(ux.inlinePrompt.value);
+            std::string extension = candidate.extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+            std::error_code ec;
+            if (extension == ".arachnopatch" && std::filesystem::is_regular_file(candidate, ec) && !ec) {
+                try {
+                    const SynthPatch patch = loadPatch(candidate.string());
+                    ux.session.playback().auditionPatch(
+                        patch,
+                        std::clamp(ux.synthPreviewMidi, 0, 127),
+                        std::clamp(ux.synthDefaultVelocity, 0.05f, 1.0f),
+                        0.6,
+                        0.0,
+                        false);
+                    changed = true;
+                } catch (const std::exception&) {
+                    // Unreadable file while browsing: skip preview.
+                }
+            }
+        }
+        return changed;
+    };
+    auto pollInputAndPatchBrowserUx = [&]() {
+        const bool patchBrowserChanged = pollPatchBrowserUx();
+        return pollMidiInput() || patchBrowserChanged;
     };
 
     auto makeSynthWindowEventContext = [&]() {
@@ -165,11 +243,30 @@ void runMainLoopFromAdapter(const GuiWindowRunLoopAdapterContext& context) {
             context.synthTooltipParam,
             context.synthTooltipHoverSince,
             context.lastRefresh,
-            [&]() { return pollMidiInput(); },
+            context.lastPlayheadPoll,
+            [&]() { return pollInputAndPatchBrowserUx(); },
             context.processRealtimeAudio,
             context.refreshSnapshot,
+            context.pollPlayhead,
             context.drawMainWindow,
-            context.drawSynthWindow});
+            context.drawSynthWindow,
+            context.syncArmedInstrument,
+            context.audioProducerActive});
+
+    // Persist the last patch folder for the next launch; never block shutdown on this.
+    try {
+        AppSettings settings;
+        try {
+            settings = loadAppSettings(defaultSettingsPath().string());
+        } catch (const std::exception&) {
+            settings = AppSettings {};
+        }
+        settings.browser.lastPatchDirectory = lastPatchDirectory;
+        std::error_code ec;
+        std::filesystem::create_directories(defaultSettingsPath().parent_path(), ec);
+        saveAppSettings(settings, defaultSettingsPath().string());
+    } catch (const std::exception&) {
+    }
 }
 
 } // namespace arachno

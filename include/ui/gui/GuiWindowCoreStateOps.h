@@ -50,6 +50,10 @@ void adjustAudioCustomLevelFromCoreState(
     int sampleRate);
 
 void refreshSnapshotFromCoreState(GuiWindowCoreStateContext& context);
+
+// Cheap playhead-only poll (~30 Hz during playback); see
+// pollPlayheadFromWindowState. Returns GuiPlayheadPollResult as int.
+int pollPlayheadFromCoreState(GuiWindowCoreStateContext& context);
 AppActionResult runActionFromCoreState(
     GuiWindowCoreStateContext& context,
     const AppActionRequest& request,

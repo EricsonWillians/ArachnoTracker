@@ -24,6 +24,7 @@ bool pollSynthMidiPreviewInput(
     std::array<bool, 128>& synthMidiPreviewHeld,
     bool synthWindowVisible,
     const std::function<void(int, float)>& auditionSynthPreviewMidiVelocity,
+    const std::function<void(int)>& noteOffSynthPreviewMidi,
     bool& synthWindowNeedsRedraw) {
     std::vector<GuiMidiEvent> midiEvents;
     const bool changed = midiInput.poll(midiEvents);
@@ -31,11 +32,12 @@ bool pollSynthMidiPreviewInput(
         const int midiNote = std::clamp(midiEvent.midiNote, 0, 127);
         if (midiEvent.type == GuiMidiEvent::Type::NoteOn) {
             synthMidiPreviewHeld[static_cast<std::size_t>(midiNote)] = true;
-            if (synthWindowVisible) {
-                auditionSynthPreviewMidiVelocity(midiNote, midiEvent.velocity);
-            }
+            // Global audition: external MIDI plays the armed instrument even when the
+            // synth window is hidden, sustaining until the matching NoteOff arrives.
+            auditionSynthPreviewMidiVelocity(midiNote, midiEvent.velocity);
         } else {
             synthMidiPreviewHeld[static_cast<std::size_t>(midiNote)] = false;
+            noteOffSynthPreviewMidi(midiNote);
         }
     }
     if (changed && synthWindowVisible) {

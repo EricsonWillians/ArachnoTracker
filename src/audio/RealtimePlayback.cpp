@@ -1,5 +1,7 @@
 #include "RealtimePlayback.h"
 
+#include <mutex>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -95,12 +97,17 @@ RealtimePlaybackSession::RealtimePlaybackSession(int sampleRate)
 }
 
 void RealtimePlaybackSession::setSong(const Song* song) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     song_ = song;
+    hasSong_.store(song != nullptr, std::memory_order_release);
     const int trackCount = song_ != nullptr ? static_cast<int>(song_->tracks.size()) : 0;
     if (static_cast<int>(trackFrameCountersScratch_.size()) < trackCount) {
         trackFrameCountersScratch_.resize(static_cast<std::size_t>(trackCount), 0);
         trackFrameStampsScratch_.resize(static_cast<std::size_t>(trackCount), -1);
         trackSegmentCountersScratch_.resize(static_cast<std::size_t>(trackCount), 0);
+    }
+    if (static_cast<int>(lastNoteForTrackScratch_.size()) < trackCount) {
+        lastNoteForTrackScratch_.resize(static_cast<std::size_t>(trackCount), -1);
     }
     rebuildRowMap();
     rebuildPreparedEvents();
@@ -115,6 +122,7 @@ void RealtimePlaybackSession::setSong(const Song* song) {
 }
 
 void RealtimePlaybackSession::play() {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     if (song_ == nullptr || totalRows() <= 0.0) {
         return;
     }
@@ -125,27 +133,33 @@ void RealtimePlaybackSession::play() {
 }
 
 void RealtimePlaybackSession::pause() {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     if (state_ == TransportState::Playing) {
         state_ = TransportState::Paused;
     }
 }
 
 void RealtimePlaybackSession::stop() {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     state_ = TransportState::Stopped;
     playheadRows_ = loop_.enabled ? loop_.startRow : 0.0;
     syncPreparedEventCursor();
     synth_.reset();
+    std::fill(lastNoteForTrackScratch_.begin(), lastNoteForTrackScratch_.end(), -1);
     resetMixBus();
 }
 
 void RealtimePlaybackSession::seekRows(double absoluteRow) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     playheadRows_ = clampRow(absoluteRow, totalRows());
     syncPreparedEventCursor();
     synth_.reset();
+    std::fill(lastNoteForTrackScratch_.begin(), lastNoteForTrackScratch_.end(), -1);
     resetMixBus();
 }
 
 void RealtimePlaybackSession::setLoopRows(double startRow, double endRow) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     const double total = totalRows();
     const double start = clampRow(std::min(startRow, endRow), total);
     const double end = clampRow(std::max(startRow, endRow), total);
@@ -153,35 +167,45 @@ void RealtimePlaybackSession::setLoopRows(double startRow, double endRow) {
         clearLoop();
         return;
     }
-    loop_.enabled = true;
-    loop_.startRow = start;
-    loop_.endRow = end;
+    {
+        const std::lock_guard<std::mutex> stateLock(stateMutex_);
+        loop_.enabled = true;
+        loop_.startRow = start;
+        loop_.endRow = end;
+    }
     if (playheadRows_ < start || playheadRows_ >= end) {
         seekRows(start);
     }
 }
 
 void RealtimePlaybackSession::clearLoop() {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
+    const std::lock_guard<std::mutex> stateLock(stateMutex_);
     loop_ = PlaybackLoop {};
 }
 
 void RealtimePlaybackSession::setFollowCursor(bool followCursor) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     followCursor_ = followCursor;
 }
 
 bool RealtimePlaybackSession::previewNote(const Note& note, const SynthPatch& patch, double gateSeconds, double pan) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     return auditionPatch(patch, note.midi, note.velocity, gateSeconds, pan).ok;
 }
 
 bool RealtimePlaybackSession::previewInstrument(int instrumentIndex, int midiNote, float velocity, double gateSeconds) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     return auditionInstrument(instrumentIndex, midiNote, velocity, gateSeconds).ok;
 }
 
 bool RealtimePlaybackSession::previewStep(int patternIndex, int row, int track) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     return auditionStep(patternIndex, row, track).ok;
 }
 
 AuditionResult RealtimePlaybackSession::audition(const AuditionRequest& request) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     AuditionResult result;
     result.request = request;
     if (request.note.midi < 0 || request.note.midi > 127) {
@@ -196,10 +220,27 @@ AuditionResult RealtimePlaybackSession::audition(const AuditionRequest& request)
     result.request.note.velocity = std::clamp(result.request.note.velocity, 0.0f, 1.0f);
     result.request.gateSeconds = std::max(0.01, request.gateSeconds);
     result.request.pan = std::clamp(request.pan, -1.0, 1.0);
-    synth_.noteOn(result.request.note, result.request.patch, result.request.pan, result.request.gateSeconds, -1);
+    synth_.noteOn(
+        result.request.note,
+        result.request.patch,
+        result.request.pan,
+        result.request.gateSeconds,
+        -1,
+        request.sustainUntilNoteOff);
     result.ok = true;
     result.message = result.request.label.empty() ? "Auditioned note" : "Auditioned " + result.request.label;
     return result;
+}
+
+void RealtimePlaybackSession::auditionNoteOff(int midiNote, int instrumentIndex) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
+    // Audition voices use noteChannel -1; instrumentIndex -1 targets patch-preview voices.
+    synth_.noteOff(std::clamp(midiNote, 0, 127), -1, instrumentIndex);
+}
+
+void RealtimePlaybackSession::releaseAllNotes(int instrumentIndex) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
+    synth_.allNotesOff(instrumentIndex);
 }
 
 AuditionResult RealtimePlaybackSession::auditionPatch(
@@ -207,13 +248,16 @@ AuditionResult RealtimePlaybackSession::auditionPatch(
     int midiNote,
     float velocity,
     double gateSeconds,
-    double pan) {
+    double pan,
+    bool sustainUntilNoteOff) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     AuditionRequest request;
     request.note = Note(midiNote, velocity);
     request.patch = patch;
     request.gateSeconds = gateSeconds;
     request.pan = pan;
     request.label = patch.name.empty() ? "patch" : patch.name;
+    request.sustainUntilNoteOff = sustainUntilNoteOff;
     return audition(request);
 }
 
@@ -223,6 +267,7 @@ AuditionResult RealtimePlaybackSession::auditionDrumPatch(
     float velocity,
     double gateSeconds,
     double pan) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     AuditionRequest request;
     request.note = Note(midiNote, velocity);
     request.patch = patch;
@@ -236,7 +281,9 @@ AuditionResult RealtimePlaybackSession::auditionInstrument(
     int instrumentIndex,
     int midiNote,
     float velocity,
-    double gateSeconds) {
+    double gateSeconds,
+    bool sustainUntilNoteOff) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     AuditionResult result;
     if (song_ == nullptr) {
         result.error = "no song is loaded";
@@ -262,7 +309,8 @@ AuditionResult RealtimePlaybackSession::auditionInstrument(
         result.request.patch,
         result.request.pan,
         result.request.gateSeconds,
-        instrumentIndex);
+        instrumentIndex,
+        sustainUntilNoteOff);
     result.ok = true;
     if (result.ok) {
         result.message = "Auditioned " + result.request.label;
@@ -271,14 +319,17 @@ AuditionResult RealtimePlaybackSession::auditionInstrument(
 }
 
 void RealtimePlaybackSession::applyLiveInstrumentWaveformChange(int instrumentIndex, const std::string& oscillator, Waveform waveform) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     synth_.applyInstrumentWaveformToActiveVoices(instrumentIndex, oscillator, waveform);
 }
 
 void RealtimePlaybackSession::applyLiveInstrumentParameterChange(int instrumentIndex, const std::string& parameter, double value) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     synth_.applyInstrumentParameterToActiveVoices(instrumentIndex, parameter, value);
 }
 
 AuditionResult RealtimePlaybackSession::auditionStep(int patternIndex, int row, int track) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     AuditionResult result;
     if (song_ == nullptr || patternIndex < 0 || patternIndex >= static_cast<int>(song_->patterns.size())) {
         result.error = song_ == nullptr ? "no song is loaded" : "pattern index is out of range";
@@ -343,6 +394,7 @@ RenderedAudio RealtimePlaybackSession::renderAuditionClip(
     std::vector<float> left(blockSize, 0.0f);
     std::vector<float> right(blockSize, 0.0f);
     for (int frame = 0; frame < totalFrames; frame += blockSize) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
         const int framesThisBlock = std::min(blockSize, totalFrames - frame);
         std::fill(left.begin(), left.begin() + framesThisBlock, 0.0f);
         std::fill(right.begin(), right.begin() + framesThisBlock, 0.0f);
@@ -357,6 +409,7 @@ RenderedAudio RealtimePlaybackSession::renderAuditionClip(
 }
 
 void RealtimePlaybackSession::render(float* left, float* right, int sampleCount) {
+    const std::lock_guard<std::recursive_mutex> audioStateLock(apiMutex_);
     if (sampleCount <= 0) {
         return;
     }
@@ -409,35 +462,51 @@ void RealtimePlaybackSession::render(float* left, float* right, int sampleCount)
 }
 
 PlaybackSnapshot RealtimePlaybackSession::snapshot() const {
+    // Lock-free by design: GUI playhead polling and action refreshes must never
+    // block on a producer block render (measured 50-85 ms stalls made the whole
+    // interface — including keyboard/MIDI audition — feel stuck). Playhead and
+    // transport state are atomics, the row map is a published shared snapshot,
+    // loop_ uses a tiny side mutex, and the synth telemetry copy is display-only
+    // (a momentarily torn field is cosmetically harmless).
     PlaybackSnapshot result;
-    result.hasSong = song_ != nullptr;
-    result.state = state_;
+    result.hasSong = hasSong_.load(std::memory_order_acquire);
+    result.state = state_.load(std::memory_order_relaxed);
     result.position = currentPosition();
-    result.loop = loop_;
-    result.followCursor = followCursor_;
-    result.previewActive = synth_.active();
-    result.sampleRate = sampleRate_;
+    {
+        const std::lock_guard<std::mutex> stateLock(stateMutex_);
+        result.loop = loop_;
+    }
+    result.followCursor = followCursor_.load(std::memory_order_relaxed);
     result.synth = synth_.telemetry();
+    result.previewActive = result.synth.activeVoices > 0;
+    result.sampleRate = sampleRate_;
     return result;
 }
 
 RealtimePlaybackSession::RowLocation RealtimePlaybackSession::locateRow(int absoluteRow) const {
     RowLocation result;
-    if (song_ == nullptr || absoluteRow < 0) {
+    if (absoluteRow < 0) {
         return result;
     }
-    if (absoluteRow >= 0 && absoluteRow < static_cast<int>(rowMap_.size())) {
-        return rowMap_[static_cast<std::size_t>(absoluteRow)];
+    // Reads the published lookup (lock-free snapshot path); the working rowMap_
+    // is only touched under apiMutex_.
+    const std::shared_ptr<const PublishedLookup> lookup = std::atomic_load(&lookupSnapshot_);
+    if (lookup != nullptr && absoluteRow < static_cast<int>(lookup->rows.size())) {
+        return lookup->rows[static_cast<std::size_t>(absoluteRow)];
     }
     return result;
 }
 
 PlaybackPosition RealtimePlaybackSession::currentPosition() const {
     PlaybackPosition position;
-    position.absoluteRow = playheadRows_;
-    position.seconds = playheadRows_ * secondsPerRow();
+    position.absoluteRow = playheadRows_.load(std::memory_order_relaxed);
+    // Lock-free path: secondsPerRow comes from the published lookup, never from
+    // dereferencing song_ (the GUI thread may be replacing the song).
+    const std::shared_ptr<const PublishedLookup> lookup = std::atomic_load(&lookupSnapshot_);
+    const double perRow = lookup != nullptr ? lookup->secondsPerRow : 0.0;
+    position.seconds = position.absoluteRow * perRow;
 
-    const RowLocation location = locateRow(static_cast<int>(std::floor(playheadRows_)));
+    const RowLocation location = locateRow(static_cast<int>(std::floor(position.absoluteRow)));
     position.orderIndex = location.orderIndex;
     position.pattern = location.pattern;
     position.patternRow = location.row;
@@ -456,27 +525,27 @@ void RealtimePlaybackSession::renderSegment(float* left, float* right, int frame
         endRow,
         [](const PreparedEvent& event, double row) { return event.row < row; });
     const int eventCountThisSegment = static_cast<int>(std::distance(cursorBegin, end));
-    const int trackCountHint = song_ != nullptr ? static_cast<int>(song_->tracks.size()) : 0;
     const double eventDensity = frameCount > 0
         ? static_cast<double>(eventCountThisSegment) / static_cast<double>(frameCount)
         : 0.0;
 
     const SynthRenderTelemetry synthTelemetry = synth_.telemetry();
-    const bool pressureHigh = synthTelemetry.underrunRisk >= 0.30
-        || synthTelemetry.dspLoadPercent >= 44.0
-        || synthTelemetry.activeVoices >= 12
-        || trackCountHint > 8
-        || eventDensity >= 0.20;
-    const bool pressureCritical = synthTelemetry.underrunRisk >= 0.48
-        || synthTelemetry.dspLoadPercent >= 58.0
-        || synthTelemetry.activeVoices >= 16
-        || trackCountHint > 12
-        || eventDensity >= 0.32;
-    const bool pressureEmergency = synthTelemetry.underrunRisk >= 0.68
-        || synthTelemetry.dspLoadPercent >= 74.0
-        || synthTelemetry.activeVoices >= 24
-        || trackCountHint > 16
-        || eventDensity >= 0.48;
+    // Pressure is driven ONLY by measured signals (wall-clock DSP load and the
+    // synth's underrun-risk estimate). Raw track/voice/event counts never trigger
+    // degradation on their own: a healthy machine plays dense arrangements at
+    // full quality, a struggling one still sheds detail to avoid drop-outs.
+    // Degradation order is strict: (1) timbre detail (unison/FX) at High,
+    // (2) low-priority note thinning at Critical, (3) hard note/gate limiting
+    // only at Emergency. Notes are never dropped at the first pressure stage.
+    // Risk thresholds are calibrated to the synth's risk formula
+    // (risk ~= (load-50)/30 + small voice/limiter terms), so each stage's risk
+    // trigger lands at roughly the same load as its dspLoad trigger.
+    const bool pressureHigh = synthTelemetry.underrunRisk >= 0.45
+        || synthTelemetry.dspLoadPercent >= 62.0;
+    const bool pressureCritical = synthTelemetry.underrunRisk >= 0.78
+        || synthTelemetry.dspLoadPercent >= 74.0;
+    const bool pressureEmergency = synthTelemetry.underrunRisk >= 0.97
+        || synthTelemetry.dspLoadPercent >= 86.0;
     auto makeLoadSafePatch = [&](const SynthPatch& source) {
         if (!pressureHigh) {
             return source;
@@ -563,19 +632,22 @@ void RealtimePlaybackSession::renderSegment(float* left, float* right, int frame
             patch.reverbEarlyMix *= 0.45;
             patch.outputGlue *= 0.55;
             patch.consoleCrosstalk *= 0.45;
-            tightenEnvelopes(0.28, 0.58);
+            tightenEnvelopes(0.4, 0.7);
             return patch;
         }
+        // High pressure: trim timbral detail only. Envelopes, gates and note
+        // lengths stay untouched — notes must keep their identity (sustain and
+        // release) until the situation is genuinely critical.
         patch.unisonVoices = std::min(3, std::max(1, patch.unisonVoices));
         patch.unisonDetuneCents *= 0.6;
         patch.fmAmount *= 0.6;
         patch.ringMod *= 0.6;
         patch.hardSync *= 0.6;
-        patch.chorusMix *= 0.45;
-        patch.chorusEnsemble *= 0.55;
-        patch.combMix *= 0.5;
-        patch.delayMix *= 0.42;
-        patch.reverbMix *= 0.36;
+        patch.chorusMix *= 0.6;
+        patch.chorusEnsemble *= 0.65;
+        patch.combMix *= 0.6;
+        patch.delayMix *= 0.55;
+        patch.reverbMix *= 0.5;
         patch.transientNoise *= 0.6;
         patch.transientShape *= 0.6;
         patch.transientBurstCount = std::clamp(patch.transientBurstCount, 1, 4);
@@ -584,7 +656,6 @@ void RealtimePlaybackSession::renderSegment(float* left, float* right, int frame
         patch.reverbEarlyMix *= 0.82;
         patch.outputGlue *= 0.85;
         patch.consoleCrosstalk *= 0.8;
-        tightenEnvelopes(0.5, 0.78);
         return patch;
     };
 
@@ -653,17 +724,19 @@ void RealtimePlaybackSession::renderSegment(float* left, float* right, int frame
     int minRenderChunkSamples = pressureEmergency
         ? 512
         : (pressureCritical ? 320 : (pressureHigh ? 192 : 96));
+    // Non-pressure quotas are generous safety valves only (chords across many
+    // tracks must never lose notes); pressure modes tighten them to shed load.
     int maxEventsPerFrame = pressureEmergency
         ? 1
-        : (pressureCritical ? 2 : (pressureHigh ? 3 : 8));
+        : (pressureCritical ? 2 : (pressureHigh ? 3 : 64));
     int maxEventsPerTrackFrame = pressureEmergency
         ? 1
-        : (pressureCritical ? 1 : (pressureHigh ? 2 : 3));
+        : (pressureCritical ? 1 : (pressureHigh ? 2 : 4));
     int maxEventsPerSegment = pressureEmergency
         ? std::max(6, frameCount / 96)
         : (pressureCritical
             ? std::max(10, frameCount / 56)
-            : (pressureHigh ? std::max(16, frameCount / 36) : std::max(24, frameCount / 24)));
+            : (pressureHigh ? std::max(16, frameCount / 36) : std::max(96, frameCount / 4)));
     const double priorityKeepThreshold = pressureEmergency
         ? 0.78
         : (pressureCritical ? 0.60 : (pressureHigh ? 0.42 : -1.0));
@@ -673,36 +746,55 @@ void RealtimePlaybackSession::renderSegment(float* left, float* right, int frame
         trackFrameStampsScratch_.resize(static_cast<std::size_t>(trackCount), -1);
         trackSegmentCountersScratch_.resize(static_cast<std::size_t>(trackCount), 0);
     }
+    if (trackCount > 0 && static_cast<int>(lastNoteForTrackScratch_.size()) < trackCount) {
+        lastNoteForTrackScratch_.resize(static_cast<std::size_t>(trackCount), -1);
+    }
     if (trackCount > 0) {
         std::fill_n(trackFrameCountersScratch_.begin(), trackCount, 0);
         std::fill_n(trackFrameStampsScratch_.begin(), trackCount, -1);
         std::fill_n(trackSegmentCountersScratch_.begin(), trackCount, 0);
     }
     int maxEventsPerTrackSegment = pressureEmergency
-        ? 2
+        ? 3
         : (pressureCritical
-            ? 4
-            : (pressureHigh
-                ? std::max(5, maxEventsPerSegment / std::max(1, std::min(trackCount, 6)))
-                : std::max(10, maxEventsPerSegment / std::max(1, std::min(trackCount, 8)))));
-    if (eventDensity >= 0.35) {
-        minRenderChunkSamples = std::max(minRenderChunkSamples, pressureEmergency ? 768 : (pressureCritical ? 448 : 256));
-        maxEventsPerFrame = std::min(maxEventsPerFrame, pressureEmergency ? 1 : (pressureCritical ? 1 : 2));
+            ? 6
+            : std::max(10, maxEventsPerSegment / std::max(1, std::min(trackCount, 8))));
+    if (pressureEmergency && eventDensity >= 0.35) {
+        minRenderChunkSamples = std::max(minRenderChunkSamples, 768);
+        maxEventsPerFrame = std::min(maxEventsPerFrame, 1);
         maxEventsPerTrackFrame = std::min(maxEventsPerTrackFrame, 1);
         maxEventsPerSegment = std::max(6, (maxEventsPerSegment * 3) / 5);
         maxEventsPerTrackSegment = std::max(2, (maxEventsPerTrackSegment * 2) / 3);
     }
     int frameStamp = 0;
     int eventsTriggeredInSegment = 0;
-    const double gateScale = pressureEmergency ? 0.18 : (pressureCritical ? 0.32 : (pressureHigh ? 0.62 : 1.0));
-    const double gateMinSeconds = pressureEmergency ? 0.006 : (pressureCritical ? 0.010 : 0.018);
-    const double gateMaxSeconds = pressureEmergency ? 0.08 : (pressureCritical ? 0.16 : 0.42);
+    // Pressure response ordering: trim timbral detail (unison/FX) FIRST, touch
+    // note lengths LAST. Gate clamping is the most audible degradation there is,
+    // so only an actual emergency shortens notes; high/critical merely bound
+    // absurd extremes.
+    const double gateScale = pressureEmergency ? 0.5 : (pressureCritical ? 0.85 : 1.0);
+    const double gateMinSeconds = pressureEmergency ? 0.012 : (pressureCritical ? 0.015 : 0.018);
+    const double gateMaxSeconds = pressureEmergency ? 2.0 : (pressureCritical ? 6.0 : 1.0e9);
     while (cursor < frameCount) {
         const int absoluteFrame = frameOffset + cursor;
         ++frameStamp;
         int eventsTriggeredAtFrame = 0;
         while (nextEvent != end && nextEventAbsoluteFrame <= absoluteFrame) {
             const int instrumentIndex = nextEvent->instrumentIndex;
+            if (nextEvent->noteOff) {
+                // Note-offs are cheap and must never be dropped by pressure throttles.
+                const int noteOffTrack = nextEvent->trackIndex;
+                if (noteOffTrack >= 0 && noteOffTrack < static_cast<int>(lastNoteForTrackScratch_.size())) {
+                    int& lastNote = lastNoteForTrackScratch_[static_cast<std::size_t>(noteOffTrack)];
+                    if (lastNote >= 0) {
+                        synth_.noteOff(lastNote, noteOffTrack);
+                        lastNote = -1;
+                    }
+                }
+                ++nextEvent;
+                nextEventAbsoluteFrame = nextEvent != end ? eventFrame(*nextEvent) : std::numeric_limits<int>::max();
+                continue;
+            }
             if (eventsTriggeredAtFrame >= maxEventsPerFrame) {
                 // Fast-forward dense event bursts scheduled for this same frame.
                 const double rowUpper = startRow
@@ -761,7 +853,12 @@ void RealtimePlaybackSession::renderSegment(float* left, float* right, int frame
                 patch,
                 nextEvent->pan,
                 safeGateSeconds,
-                instrumentIndex);
+                instrumentIndex,
+                false,
+                eventTrack);
+            if (eventTrack >= 0 && eventTrack < static_cast<int>(lastNoteForTrackScratch_.size())) {
+                lastNoteForTrackScratch_[static_cast<std::size_t>(eventTrack)] = nextEvent->note.midi;
+            }
             ++eventsTriggeredAtFrame;
             ++eventsTriggeredInSegment;
             if (eventTrack >= 0 && eventTrack < trackCount) {
@@ -813,6 +910,10 @@ void RealtimePlaybackSession::rebuildRowMap() {
         }
         startRow += pattern.rowCount();
     }
+    auto published = std::make_shared<PublishedLookup>();
+    published->secondsPerRow = song_ != nullptr ? song_->secondsPerRow() : 0.0;
+    published->rows = rowMap_;
+    std::atomic_store(&lookupSnapshot_, std::shared_ptr<const PublishedLookup>(std::move(published)));
 }
 
 void RealtimePlaybackSession::rebuildPreparedEvents() {
@@ -829,7 +930,9 @@ void RealtimePlaybackSession::rebuildPreparedEvents() {
         : 0.001;
     const double total = totalRows();
     const int trackCount = static_cast<int>(song_->tracks.size());
-    const int maxEventsPerSourceRow = std::clamp(trackCount + (trackCount / 2), 8, 32);
+    // Safety valve for pathological rows only: every lane of a dense imported
+    // chord must be schedulable (a 60-track chord needs ~90 events on one row).
+    const int maxEventsPerSourceRow = std::clamp(trackCount + (trackCount / 2), 8, 256);
     std::size_t estimated = 0;
     for (const RowLocation& location : rowMap_) {
         if (location.valid) {
@@ -854,7 +957,22 @@ void RealtimePlaybackSession::rebuildPreparedEvents() {
                 continue;
             }
             const PatternStep& step = pattern.step(location.row, track);
-            if (!step.note.has_value() || step.instrument < 0 || step.instrument >= static_cast<int>(song_->instruments.size())) {
+            if (!step.note.has_value()) {
+                if (step.noteOff) {
+                    const double eventRow = static_cast<double>(absoluteRow) + step.microOffsetRows;
+                    if (eventRow >= 0.0 && eventRow < total) {
+                        PreparedEvent event;
+                        event.row = eventRow;
+                        event.trackIndex = track;
+                        // High priority so note-offs survive pressure-based event thinning.
+                        event.priority = 1.0;
+                        event.noteOff = true;
+                        rowEvents.push_back(event);
+                    }
+                }
+                continue;
+            }
+            if (step.instrument < 0 || step.instrument >= static_cast<int>(song_->instruments.size())) {
                 continue;
             }
             if (!shouldTriggerStep(step, location.pattern, absoluteRow, location.row, track)) {
@@ -1038,7 +1156,7 @@ double RealtimePlaybackSession::playbackHeadroomGain() const {
         }
     }
     const double trackCount = std::max(1.0, static_cast<double>(audibleTracks));
-    const double effectiveTracks = 1.0 + (trackCount - 1.0) * 0.24;
+    const double effectiveTracks = 1.0 + (trackCount - 1.0) * 0.12;
     return 1.0 / std::sqrt(effectiveTracks);
 }
 

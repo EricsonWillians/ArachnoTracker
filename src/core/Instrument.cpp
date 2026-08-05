@@ -398,6 +398,32 @@ bool setSynthPatchParameter(SynthPatch& patch, const std::string& parameter, dou
         patch.filterEnvelope.sustain = value;
     } else if (name == "filter_release") {
         patch.filterEnvelope.release = value;
+    } else if (name == "portamento" || name == "portamento_time" || name == "glide") {
+        patch.portamentoTime = std::clamp(value, 0.0, 5.0);
+    } else if (name == "portamento_legato" || name == "glide_legato") {
+        patch.portamentoLegato = value >= 0.5;
+    } else if (name == "fm_decay") {
+        patch.fmDecay = std::clamp(value, 0.0, 8.0);
+    } else if (name == "velocity_to_fm" || name == "vel_fm") {
+        patch.velocityToFm = std::clamp(value, 0.0, 1.0);
+    } else if (name == "mono_mode" || name == "mono") {
+        patch.monoMode = value >= 0.5;
+    } else if (name == "osc_b_ratio") {
+        patch.oscBRatio = std::clamp(value, 0.0625, 16.0);
+    } else if (name == "osc_c_ratio") {
+        patch.oscCRatio = std::clamp(value, 0.0625, 16.0);
+    } else if (name == "osc_d_ratio") {
+        patch.oscDRatio = std::clamp(value, 0.0625, 16.0);
+    } else if (name == "osc_b_decay") {
+        patch.oscBDecay = std::clamp(value, 0.0, 8.0);
+    } else if (name == "osc_c_decay") {
+        patch.oscCDecay = std::clamp(value, 0.0, 8.0);
+    } else if (name == "osc_d_decay") {
+        patch.oscDDecay = std::clamp(value, 0.0, 8.0);
+    } else if (name == "velocity_to_decay" || name == "vel_decay") {
+        patch.velocityToDecay = std::clamp(value, 0.0, 1.0);
+    } else if (name == "key_track_decay" || name == "keytrack_decay") {
+        patch.keyTrackDecay = std::clamp(value, 0.0, 1.0);
     } else {
         return false;
     }
@@ -478,14 +504,14 @@ void applyCompetitionPresetQuality(SynthPatch& patch, double intensity, bool per
     patch.drive = std::clamp(std::max(patch.drive, 0.04), 0.0, 0.66);
     patch.wavefold = std::clamp(patch.wavefold, 0.0, 0.28);
     patch.filterDrive = std::clamp(patch.filterDrive, 0.0, 0.72);
-    patch.filterEnvelope.decay = std::clamp(patch.filterEnvelope.decay, 0.001, 0.45);
+    patch.filterEnvelope.decay = std::clamp(patch.filterEnvelope.decay, 0.001, 1.50);
     patch.ampEnvelope.decay = std::clamp(patch.ampEnvelope.decay, 0.001, 0.70);
     patch.hifiExciter = std::min(patch.hifiExciter, 0.16);
     patch.outputTransformer = std::min(patch.outputTransformer, 0.24);
     patch.outputSoftClip = std::min(patch.outputSoftClip, 0.18);
     patch.outputGlue = std::min(patch.outputGlue, 0.26);
     patch.toneTilt = std::clamp(patch.toneTilt, -0.9, 0.9);
-    patch.pitchEnvelopeSemitones = std::clamp(patch.pitchEnvelopeSemitones, -4.0, 4.0);
+    patch.pitchEnvelopeSemitones = std::clamp(patch.pitchEnvelopeSemitones, -24.0, 24.0);
     patch.pitchEnvelopeDecay = std::clamp(patch.pitchEnvelopeDecay, 0.0, 0.60);
     patch.delayFeedback = std::clamp(patch.delayFeedback, 0.0, 0.72);
     patch.delayTime = std::clamp(patch.delayTime, 0.0, 0.95);

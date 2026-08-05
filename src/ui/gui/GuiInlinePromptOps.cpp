@@ -242,7 +242,8 @@ void executeInlinePromptOps(const GuiInlinePromptExecutionContext& context) {
             std::error_code ec;
             const std::filesystem::path source(value);
             if (std::filesystem::exists(source, ec) && std::filesystem::is_directory(source, ec)) {
-                for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(source, ec)) {
+                // Recurse so category subfolders (e.g. patches/factory/bass) are included.
+                for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(source, ec)) {
                     if (ec || !entry.is_regular_file(ec)) {
                         continue;
                     }
@@ -250,8 +251,11 @@ void executeInlinePromptOps(const GuiInlinePromptExecutionContext& context) {
                         patchPaths.push_back(entry.path());
                     }
                 }
-                std::sort(patchPaths.begin(), patchPaths.end(), [](const auto& a, const auto& b) {
-                    return a.filename().string() < b.filename().string();
+                std::sort(patchPaths.begin(), patchPaths.end(), [&source](const auto& a, const auto& b) {
+                    std::error_code relEc;
+                    const std::string relA = std::filesystem::relative(a, source, relEc).string();
+                    const std::string relB = std::filesystem::relative(b, source, relEc).string();
+                    return relA < relB;
                 });
                 if (patchPaths.empty()) {
                     throw std::runtime_error("folder has no .arachnopatch files");

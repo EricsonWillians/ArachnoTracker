@@ -41,7 +41,8 @@ void auditionSynthPreviewMidiFromWindowState(const GuiSynthAuditionWindowContext
         context.synthPreviewMidi,
         context.defaultVelocity,
         0.20,
-        "instrument.audition.patch_preview");
+        "instrument.audition.patch_preview",
+        true);
     context.applyActionResultStatus(result);
     context.synthWindowNeedsRedraw = true;
 }
@@ -60,7 +61,8 @@ void auditionSynthPreviewMidiVelocityFromWindowState(
         context.synthPreviewMidi,
         velocity,
         gateSeconds,
-        "instrument.audition.midi");
+        "instrument.audition.midi",
+        true);
     context.applyActionResultStatus(result);
     context.synthWindowNeedsRedraw = true;
 }

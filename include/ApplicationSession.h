@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -83,6 +84,10 @@ public:
     const PatternEditorSession& editor() const { return *editor_; }
     RealtimePlaybackSession& playback() { return playback_; }
     const RealtimePlaybackSession& playback() const { return playback_; }
+    // Shared audio-state mutex (see RealtimePlaybackSession::apiMutex): hold it
+    // (briefly, never across waits/redraws) around any song/playback mutation
+    // that can race the dedicated audio producer thread's block renders.
+    std::recursive_mutex& audioStateMutex() const { return playback_.apiMutex(); }
 
     bool dirty() const { return dirty_; }
     const std::string& projectPath() const { return projectPath_; }

@@ -40,6 +40,11 @@ void drawMainModalOverlays(const GuiMainModalDrawContext& context) {
         context.drawButton(saveRect, "SAVE", false);
         context.drawButton(discardRect, "DISCARD", false);
         context.drawButton(cancelRect, "CANCEL", false);
+        context.drawText(
+            modalX + 12,
+            modalY + modalH - 48,
+            "Enter/S = save   D = discard   Esc = cancel",
+            context.colorMutedText);
         context.unsavedPromptChoices.push_back({saveRect, UnsavedChangesChoice::Save});
         context.unsavedPromptChoices.push_back({discardRect, UnsavedChangesChoice::Discard});
         context.unsavedPromptChoices.push_back({cancelRect, UnsavedChangesChoice::Cancel});
@@ -56,7 +61,7 @@ void drawMainModalOverlays(const GuiMainModalDrawContext& context) {
         context.drawText(
             modalX + 12,
             modalY + 44,
-            "Type to filter by name/index | Enter choose | Up/Down navigate | Ctrl+Up/Down cycle | Esc cancel",
+            "Type to filter | Enter select | Up/Down move | Ctrl+Up/Down cycle armed | Esc cancel",
             context.colorMutedText);
 
         const UiRect queryRect {modalX + 12, modalY + 54, modalW - 24, 22};
@@ -88,8 +93,9 @@ void drawMainModalOverlays(const GuiMainModalDrawContext& context) {
             context.colorGridLine);
 
         const std::vector<int> filtered = context.filteredInstrumentIndices(context.snapshot);
-        const int rowHeight = 18;
-        const int visibleRows = std::max(1, (context.instrumentBrowserListRect.height - 4) / rowHeight);
+        const int rowHeight = 20;
+        const int rowStartY = 18;
+        const int visibleRows = std::max(1, (context.instrumentBrowserListRect.height - rowStartY - 2) / rowHeight);
         const int maxScroll = std::max(0, static_cast<int>(filtered.size()) - visibleRows);
         context.instrumentBrowserSelected = std::clamp(
             context.instrumentBrowserSelected,
@@ -109,6 +115,11 @@ void drawMainModalOverlays(const GuiMainModalDrawContext& context) {
                 "No instruments match this filter.",
                 context.colorMutedText);
         } else {
+            context.drawText(
+                context.instrumentBrowserListRect.x + 8,
+                context.instrumentBrowserListRect.y + 2,
+                "P = project instrument | S = Standard MIDI (adds new instrument)",
+                context.colorMutedText);
             for (int row = 0; row < visibleRows; ++row) {
                 const int filteredRow = context.instrumentBrowserScroll + row;
                 if (filteredRow >= static_cast<int>(filtered.size())) {
@@ -129,7 +140,7 @@ void drawMainModalOverlays(const GuiMainModalDrawContext& context) {
                 }
                 const UiRect rowRect {
                     context.instrumentBrowserListRect.x + 2,
-                    context.instrumentBrowserListRect.y + 2 + (row * rowHeight),
+                    context.instrumentBrowserListRect.y + rowStartY + (row * rowHeight),
                     context.instrumentBrowserListRect.width - 4,
                     rowHeight};
                 const bool selected = filteredRow == context.instrumentBrowserSelected;
@@ -143,12 +154,19 @@ void drawMainModalOverlays(const GuiMainModalDrawContext& context) {
                 }
                 std::ostringstream line;
                 if (standardMidi) {
-                    line << "StdMIDI  " << (filteredRow < 10 ? "0" : "") << filteredRow << "  " << name;
+                    line << "S  " << (filteredRow < 10 ? "0" : "") << filteredRow << "  "
+                         << context.fitText(name, 30) << "  "
+                         << instrumentCategoryFromName(name) << "  "
+                         << "[new]";
                 } else {
                     const InstrumentSummary& instrument =
                         context.snapshot.editor.instruments[static_cast<std::size_t>(instrumentIndex)];
-                    line << (instrumentIndex < 10 ? "0" : "") << instrumentIndex << "  " << name
-                         << "  (" << instrument.noteUseCount << ")";
+                    line << "P "
+                         << (instrumentIndex < 10 ? "0" : "") << instrumentIndex << "  "
+                         << context.fitText(name, 40) << "  "
+                         << instrumentCategoryFromName(name)
+                         << "  "
+                         << instrument.noteUseCount << " uses";
                 }
                 context.drawText(
                     rowRect.x + 6,

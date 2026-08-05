@@ -56,6 +56,10 @@ struct GuiWindowSynthLifecycleBindingsInput {
         const std::string&,
         int,
         int)> beginInlinePrompt;
+    // Sends a note-off for a released sustained preview key (midi note argument).
+    std::function<void(int)> auditionSynthPreviewNoteOff;
+    // Releases every sustained live-audition voice (used when the preview context closes).
+    std::function<void()> releaseAllSynthPreviewNotes;
 };
 
 struct GuiWindowSynthLifecycleBindings {

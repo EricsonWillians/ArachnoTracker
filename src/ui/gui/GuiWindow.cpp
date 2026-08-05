@@ -21,7 +21,10 @@
 #include <X11/Xutil.h>
 
 #include "AppActions.h"
+#include "AppSettings.h"
+#include "ui/gui/GuiAudioProducerOps.h"
 #include "ui/gui/GuiAudioRuntime.h"
+#include "ui/gui/GuiPathDefaults.h"
 #include "ui/gui/GuiEditorWindowStateOps.h"
 #include "ui/gui/GuiInlinePromptOps.h"
 #include "ui/gui/GuiMainRealtimeAudioOps.h"
@@ -78,7 +81,9 @@ int runGuiWindow(
     int armedOctave = 4;
     float defaultVelocity = 0.80f;
     bool stepAdvance = true;
-    bool followPlayback = true;
+    // Initialized from persisted settings (AppSettings.layout.followPlayback);
+    // the sidebar FOLLOW toggle writes it back (see followPlaybackChanged wiring).
+    bool followPlayback = session.settings().layout.followPlayback;
     int viewStartRow = 0;
     int requestedRowCount = std::max(1, options.snapshotGridRowCount);
     int topPanelHeightState = 210;
@@ -130,6 +135,7 @@ int runGuiWindow(
     UiRect orderAppendButton;
     UiRect orderDeleteButton;
     UiRect stepAdvanceButton;
+    UiRect legatoButton;
     UiRect followPlaybackButton;
     UiRect instrumentListRect;
     UiRect instrumentBrowserListRect;
@@ -409,7 +415,9 @@ int runGuiWindow(
                 int targetTrack,
                 int targetInstrument) {
                     coreBindings.beginInlinePrompt(kind, title, hint, initialValue, targetTrack, targetInstrument);
-                }});
+                },
+            [&](int midiNote) { session.playback().auditionNoteOff(midiNote, -1); },
+            [&]() { session.playback().releaseAllNotes(-1); }});
     auto releaseSynthBackbuffer = synthLifecycleBindings.releaseSynthBackbuffer;
     auto ensureSynthBackbuffer = synthLifecycleBindings.ensureSynthBackbuffer;
     auto claimSynthPreviewKey = synthLifecycleBindings.claimSynthPreviewKey;
@@ -514,6 +522,8 @@ int runGuiWindow(
     bool running = true;
     bool needsRedraw = true;
     auto lastRefresh = std::chrono::steady_clock::now();
+    auto lastPlayheadPoll = std::chrono::steady_clock::now();
+    bool lastFollowPlaybackSynced = followPlayback;
 
     std::function<void()> draw;
     std::function<void()> drawSynthWindow;
@@ -726,6 +736,7 @@ int runGuiWindow(
                 patternRowsPlus,
                 patternRowsValue,
                 stepAdvanceButton,
+                legatoButton,
                 followPlaybackButton,
                 audioRuntime,
                 coreBindings.audibleTrackCount,
@@ -821,6 +832,54 @@ int runGuiWindow(
                 [&]() { return collectSynthPreviewNotes(); }});
     };
 
+    int lastSyncedCursorRow = -1;
+    int lastSyncedCursorTrack = -1;
+    auto syncArmedInstrumentFromSession = [&]() {
+        const int count = static_cast<int>(session.song().instruments.size());
+        if (count <= 0) {
+            armedInstrument = 0;
+            lastSyncedCursorRow = -1;
+            lastSyncedCursorTrack = -1;
+            return;
+        }
+        // O(1) direct reads — this runs EVERY main-loop iteration. It used to
+        // call session.snapshot(), which rebuilds the whole editor view model
+        // (countContent over every pattern/row/track + a full pattern grid)
+        // hundreds of times per second while the loop hot-spins during
+        // streaming — pegging the GUI thread and starving keyboard/MIDI note
+        // dispatch (a major source of "random" audition stutter).
+        // Safe without locks: song/editor state is written only on this thread.
+        const EditorCursor& cursor = session.editor().cursor();
+        lastSyncedCursorRow = cursor.row;
+        lastSyncedCursorTrack = cursor.track;
+        const auto& patterns = session.song().patterns;
+        if (cursor.pattern >= 0 && cursor.pattern < static_cast<int>(patterns.size())) {
+            const Pattern& pattern = patterns[static_cast<std::size_t>(cursor.pattern)];
+            if (cursor.row >= 0 && cursor.row < pattern.rowCount() && cursor.track >= 0
+                && cursor.track < static_cast<int>(session.song().tracks.size())) {
+                const PatternStep& activeStep = pattern.step(cursor.row, cursor.track);
+                if (activeStep.note.has_value() && activeStep.instrument >= 0 && activeStep.instrument < count) {
+                    armedInstrument = activeStep.instrument;
+                }
+            }
+        }
+        if (armedInstrument < 0 || armedInstrument >= count) {
+            armedInstrument = std::clamp(armedInstrument, 0, count - 1);
+        }
+    };
+
+    // Dedicated audio producer thread: renders realtime blocks off the GUI
+    // thread so redraws/snapshot rebuilds cannot starve playback. If thread
+    // creation fails, audioProducerActive stays false and the GUI falls back
+    // to its inline render loop (processMainRealtimeAudio).
+    GuiAudioProducer audioProducer(
+        session,
+        audioRuntime,
+        coreBindings.writeAudioOutput,
+        coreBindings.tuneRealtimeAudioForLoad);
+    const bool audioProducerActive = audioProducer.start();
+    audioRuntime.setProducerActive(audioProducerActive);
+
     runMainLoopFromAdapter(
         GuiWindowRunLoopAdapterContext {
             display,
@@ -849,6 +908,7 @@ int runGuiWindow(
             synthTooltipParam,
             synthTooltipHoverSince,
             lastRefresh,
+            lastPlayheadPoll,
             isAutoRepeatRelease,
             synthLifecycleBindings.releaseSynthPreviewKey,
             coreBindings.ensureTrackerBackbuffer,
@@ -867,11 +927,34 @@ int runGuiWindow(
                         coreBindings.openAudioOutput,
                         coreBindings.closeAudioOutput,
                         coreBindings.writeAudioOutput,
-                        coreBindings.tuneRealtimeAudioForLoad});
+                        coreBindings.tuneRealtimeAudioForLoad,
+                        audioProducerActive});
             },
             coreBindings.refreshSnapshot,
+            [&]() {
+                // FOLLOW toggle sync/persist: the sidebar button flips the local
+                // flag; mirror it into the playback session and settings file.
+                if (followPlayback != lastFollowPlaybackSynced) {
+                    lastFollowPlaybackSynced = followPlayback;
+                    session.playback().setFollowCursor(followPlayback);
+                    AppSettings updatedSettings = session.settings();
+                    updatedSettings.layout.followPlayback = followPlayback;
+                    (void)session.updateSettings(updatedSettings);
+                    std::error_code ec;
+                    std::filesystem::create_directories(defaultSettingsPath().parent_path(), ec);
+                    saveAppSettings(updatedSettings, defaultSettingsPath().string());
+                }
+                return pollPlayheadFromCoreState(coreStateContext);
+            },
             [&]() { draw(); },
-            [&]() { drawSynthWindow(); }});
+            [&]() { drawSynthWindow(); },
+            syncArmedInstrumentFromSession,
+            audioProducerActive});
+
+    // Stop the producer before tearing down the output stream (its enqueues
+    // are serialized with close() via the runtime lifecycle mutex, but joining
+    // here keeps shutdown ordering obvious).
+    audioProducer.stop();
 
     shutdownGuiWindowSession(
         GuiWindowShutdownContext {

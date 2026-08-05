@@ -93,6 +93,7 @@ void renderMainWindowFromAdapter(const GuiWindowMainRenderAdapterContext& contex
             context.interaction.orderAppendButton,
             context.interaction.orderDeleteButton,
             context.interaction.stepAdvanceButton,
+            context.interaction.legatoButton,
             context.interaction.followPlaybackButton,
             context.interaction.instrumentListRect,
             context.interaction.instrumentBrowserListRect,

@@ -23,7 +23,7 @@ The object graph mirrors the native project format:
 
 - `Song`: project metadata, tracks, instruments, patterns, and arrangement order.
 - `Track`: mixer lane name, volume, pan, mute, and solo state.
-- `SynthPatch`: native synthesizer preset with oscillator, modulation, filter, envelope, drive, lo-fi, unison, chorus, and percussion-transient controls.
+- `SynthPatch`: native synthesizer preset modeling the full engine surface — 4 oscillators with per-osc level/detune/pulse-width/PWM/drive, layered ratio/decay timbre, modulation, dual-filter modes, FM, envelopes, drive, lo-fi, unison, chorus/delay/reverb FX, color/character, velocity expression, and percussion-transient controls.
 - `Pattern`: tracker grid addressed by `(row, track)`.
 - `Step`: one grid cell with note, instrument, velocity, gate, probability, retriggering, microtiming, and automation.
 - `Envelope`: ADSR values in seconds plus normalized sustain.
@@ -91,6 +91,64 @@ patch.chorus_mix = 0.12
 at.save_patch(patch, "cold_bass_wide.arachnopatch")
 ```
 
+### Extended patch fields
+
+In addition to the core fields, `SynthPatch` exposes the extended engine
+surface. Every field default mirrors the native C++ `SynthPatch` default, so
+SDK patches load identically in the app:
+
+- `filter_drive`, `filter_keytrack`
+- `chorus_ensemble` (Juno-style multi-tap ensemble chorus)
+- `delay_mix`, `delay_time`, `delay_feedback`
+- `reverb_mix`, `reverb_size`, `reverb_damping`, `reverb_decay`
+  (Freeverb-class comb/allpass reverb)
+- `portamento_time` (seconds of pitch glide; `0` = off),
+  `portamento_legato` (glide only between overlapping notes)
+- `mono_mode` (classic monosynth: only one voice per instrument+channel)
+- `fm_decay` (seconds for FM depth to decay to zero; `0` = constant) and
+  `velocity_to_fm` (velocity→FM depth, DX7-style dynamics)
+- `Waveform.SUPERSAW` oscillator shape
+
+The full native parameter surface is modeled, grouped as:
+
+- Oscillator C/D and per-oscillator shape controls: `oscillator_c`,
+  `oscillator_d` (waveforms), `oscillator_c_enabled`, `oscillator_d_enabled`,
+  `oscillator_c_mix`, `oscillator_d_mix`, `detune_c_cents`, `detune_d_cents`,
+  `osc_a_level`..`osc_d_level`, `osc_a_detune_cents`..`osc_d_detune_cents`,
+  `osc_a_pulse_width`..`osc_d_pulse_width`, `osc_a_pwm_depth`..`osc_d_pwm_depth`,
+  `osc_a_drive`..`osc_d_drive`
+- Layered timbre (per-osc frequency ratios and 1-pole decay layers):
+  `osc_b_ratio`, `osc_c_ratio`, `osc_d_ratio` (default `1.0`),
+  `osc_b_decay`, `osc_c_decay`, `osc_d_decay`, `velocity_to_decay`,
+  `key_track_decay` (default `0.0`)
+- Filter / FM / drive extras: `filter_mode`, `lfo_filter_depth`,
+  `lfo_pan_depth`, `fm_feedback`, `fm_algorithm`, `fm_color`, `fm_spread`,
+  `wavefold`, `comb_mix`, `comb_time`, `comb_feedback`
+- Delay extras: `delay_tone`, `delay_stereo`, `delay_mod_depth`,
+  `delay_drive`, `delay_ducking`, `delay_diffusion`, `delay_wow`,
+  `delay_crossfeed`
+- Reverb extras: `reverb_pre_delay`, `reverb_diffusion`, `reverb_width`,
+  `reverb_shimmer`, `reverb_mod_depth`, `reverb_early_mix`, `reverb_tone`,
+  `reverb_chorus`, `reverb_bloom`
+- Chorus extras: `chorus_feedback`, `chorus_delay`, `chorus_width`,
+  `chorus_tone`, `chorus_jitter`, `chorus_saturation`
+- Color / character: `analog_color`, `vintage_drift`, `wow_flutter`,
+  `tone_tilt`, `tape_color`, `air_boost`, `low_punch`, `analog_warmth`,
+  `voice_slop`, `phase_scatter`, `unison_warp`, `unison_humanize`,
+  `console_crosstalk`, `stereo_depth`, `hifi_exciter`, `output_transformer`,
+  `output_soft_clip`, `output_glue`
+- Velocity expression (`.arachnopatch` files only; the project instrument
+  chain omits this block by design): `velocity_to_amp`, `velocity_to_filter`,
+  `velocity_to_attack`, `velocity_curve`, `filter_keytrack_resonance`,
+  `filter_nonlinearity`, `amp_envelope_curve`, `filter_envelope_curve`
+
+`save_patch` writes the modern `arachno_patch 2` 159-value layout (the same
+layout the C++ application writes, including all four oscillator names on the
+`oscillators` line), and `load_patch` reads every historical layout (v1
+legacy 32-value files, intermediate layouts, and any modern v2 tail length —
+138-value early-v2 files through current 159-value files, including the
+factory and `patches/gm/` libraries).
+
 Useful darkwave/EBM presets are available in `at.presets`:
 
 - `low_saw()`
@@ -99,6 +157,12 @@ Useful darkwave/EBM presets are available in `at.presets`:
 - `ebm_kick()`
 - `gated_snare()`
 - `metal_hat()`
+
+Classic synthesized strings (full ADSR, high sustain for held notes):
+
+- `classic_strings()` — lush 80s ensemble strings
+- `synth_strings_85()` — brighter mid-80s synth strings
+- `analog_string_machine()` — Solina-style slow-swell string machine
 
 ## Pattern Editing
 
@@ -125,6 +189,19 @@ hat.probability = 0.65
 hat.retrigger_count = 3
 hat.retrigger_spacing_rows = 0.12
 hat.retrigger_velocity_decay = 0.72
+```
+
+A step can also be a note-off (shown as `===` in the GUI): it releases the last
+note started on that track through its envelope release phase, which is how
+long sustained notes (pads, strings) are ended early:
+
+```python
+pad_note = pattern.step(0, 1)
+pad_note.midi = at.note_name_to_midi("C4")
+pad_note.instrument = 3
+pad_note.gate = 24.0  # rings for 24 rows unless a note-off cuts it
+release_step = pattern.step(8, 1)
+release_step.note_off = True
 ```
 
 Per-step automation targets native synth parameters:

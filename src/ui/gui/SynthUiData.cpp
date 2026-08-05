@@ -59,7 +59,7 @@ const std::vector<SynthParamDef>& synthParamDefinitions() {
         {"gain", "GAIN", 0.0, 1.0, 0.02},
         {"cutoff", "CUTOFF", 0.0, 1.0, 0.02},
         {"resonance", "RESO", 0.0, 1.0, 0.02},
-        {"filter_mode", "F MODE", 0.0, 2.0, 1.0},
+        {"filter_mode", "F MODE", 0.0, 4.0, 1.0},
         {"filter_drive", "F DRIVE", 0.0, 1.0, 0.02},
         {"filter_keytrack", "F KEYTRK", 0.0, 1.0, 0.02},
         {"filter_envelope", "F-ENV", -1.0, 1.0, 0.02},

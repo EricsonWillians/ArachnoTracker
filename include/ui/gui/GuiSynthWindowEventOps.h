@@ -75,6 +75,8 @@ struct GuiSynthWindowEventContext {
     std::function<bool(int, int, bool)> triggerSynthKeyboardPointer;
     std::function<bool(int, int)> handleSynthWindowClick;
     std::function<void()> refreshSnapshot;
+    // Ends a sustained pointer-preview note (virtual piano key release).
+    std::function<void(int)> noteOffSynthPreviewMidi;
 
     std::function<int()> clampInstrumentIndex;
     std::function<const SynthParamDef*(const std::string&)> findSynthParamDef;

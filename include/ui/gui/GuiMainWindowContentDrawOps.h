@@ -110,6 +110,7 @@ struct GuiMainWindowContentDrawContext {
     UiRect& patternRowsValue;
     UiRect& patternRowsPlus;
     UiRect& stepAdvanceButton;
+    UiRect& legatoButton;
     UiRect& followPlaybackButton;
     UiRect& gridTrackPrevButton;
     UiRect& gridTrackNextButton;

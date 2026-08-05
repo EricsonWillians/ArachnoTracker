@@ -134,6 +134,7 @@ struct GuiMainWindowInteractionAdapterContext {
     UiRect& patternRowsPlus;
     UiRect& patternRowsValue;
     UiRect& stepAdvanceButton;
+    UiRect& legatoButton;
     UiRect& followPlaybackButton;
 
     std::function<AppSessionSnapshot()> activeSnapshot;

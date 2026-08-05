@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdlib>
 
+#include "ui/gui/GuiFileBrowserOps.h"
+
 namespace arachno {
 
 GuiMainModalMouseResult handleMainModalButtonPress(
@@ -14,18 +16,15 @@ GuiMainModalMouseResult handleMainModalButtonPress(
     GuiMainModalMouseResult result;
 
     if (button == Button1 && context.unsavedPrompt.active) {
-        bool handled = false;
         for (const auto& choice : context.unsavedPromptChoices) {
             if (!choice.first.contains(mx, my)) {
                 continue;
             }
             context.resolveUnsavedPrompt(choice.second);
-            handled = true;
             break;
         }
-        if (!handled) {
-            context.resolveUnsavedPrompt(UnsavedChangesChoice::Cancel);
-        }
+        // Clicks outside the buttons keep the dialog open instead of silently
+        // cancelling the pending action (use CANCEL or Escape to dismiss).
         result.consumed = true;
         result.needsRedraw = true;
         return result;
@@ -43,6 +42,7 @@ GuiMainModalMouseResult handleMainModalButtonPress(
                         continue;
                     }
                     context.instrumentBrowserSelected = hit.second;
+                    context.closeInstrumentBrowser(true);
                     break;
                 }
             }
@@ -135,6 +135,10 @@ GuiMainModalMouseResult handleMainModalButtonPress(
                             context.inlinePrompt.value = context.fileBrowserDirectory.string();
                         } else {
                             context.inlinePrompt.value = entry.path.string();
+                            // Double-click a file to confirm it immediately.
+                            if (fileBrowserRegisterClickForDoubleClick(hit.index)) {
+                                context.executeInlinePrompt();
+                            }
                         }
                     }
                     handled = true;

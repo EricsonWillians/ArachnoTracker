@@ -24,7 +24,8 @@ int drawSynthKeyboardSection(const GuiSynthKeyboardSectionContext& context) {
     const int keyboardWidth = whiteKeys * whiteKeyWidth;
     const int maxKeyboardStart = std::max(0, 10 - context.synthKeyboardVisibleOctaves);
     context.synthKeyboardBaseOctave = std::clamp(context.synthKeyboardBaseOctave, 0, maxKeyboardStart);
-    const int baseMidi = std::clamp(context.synthKeyboardBaseOctave * 12, 0, 120);
+    // Display convention (midiNoteName: 60 = C4): base octave N starts at (N + 1) * 12.
+    const int baseMidi = std::clamp((context.synthKeyboardBaseOctave + 1) * 12, 0, 120);
     context.drawText(16, context.keyboardTop - 8, "AUDITION KEYS", context.colors.mutedText);
     const int infoPanelX = keyboardLeft + keyboardWidth + 10;
     const int infoPanelWidth = std::max(140, context.panelRight - infoPanelX);
@@ -76,7 +77,7 @@ int drawSynthKeyboardSection(const GuiSynthKeyboardSectionContext& context) {
                 context.drawText(
                     keyRect.x + 2,
                     keyRect.y + whiteKeyHeight - 6,
-                    "C" + std::to_string(context.synthKeyboardBaseOctave + octave),
+                    midiNoteName(octaveMidi),
                     context.colors.mutedText);
             }
         }
@@ -116,8 +117,8 @@ int drawSynthKeyboardSection(const GuiSynthKeyboardSectionContext& context) {
         infoTextX,
         infoPanel.y + 62,
         context.fitText(
-            "C" + std::to_string(context.synthKeyboardBaseOctave) + "..C"
-                + std::to_string(context.synthKeyboardBaseOctave + context.synthKeyboardVisibleOctaves),
+            midiNoteName(baseMidi) + ".."
+                + midiNoteName(std::clamp(baseMidi + (context.synthKeyboardVisibleOctaves * 12), 0, 127)),
             infoTextW),
         context.colors.text);
     context.drawText(infoTextX, infoPanel.y + 78, context.fitText("Mouse click/drag = preview", infoTextW), context.colors.mutedText);

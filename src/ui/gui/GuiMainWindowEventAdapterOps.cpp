@@ -371,6 +371,7 @@ GuiMainButtonPressContextFactoryInput makeButtonPressFactoryInputFromWindowAdapt
         input.patternRowsPlus,
         input.patternRowsValue,
         input.stepAdvanceButton,
+        input.legatoButton,
         input.followPlaybackButton,
         input.draggingPatternRows,
         input.patternResizeAnchorY,

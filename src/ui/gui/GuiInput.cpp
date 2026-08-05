@@ -67,7 +67,9 @@ bool trackerKeyToMidi(KeySym key, int octave, int& midiNote) {
         default:
             return false;
     }
-    midiNote = (octave * 12) + semitone;
+    // Octave numbers follow the app-wide display convention (midiNoteName: 60 = C4),
+    // so armed octave N maps its C to MIDI (N + 1) * 12.
+    midiNote = ((octave + 1) * 12) + semitone;
     midiNote = std::clamp(midiNote, 0, 127);
     return true;
 }

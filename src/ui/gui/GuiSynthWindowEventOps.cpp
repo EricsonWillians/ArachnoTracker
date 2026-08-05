@@ -110,6 +110,10 @@ GuiSynthWindowEventResult handleSynthWindowEvent(
     }
     if (event.type == ButtonRelease) {
         if (event.xbutton.button == Button1) {
+            // Releasing the pointer ends the sustained virtual-piano note.
+            if (context.synthLastPointerMidi >= 0 && context.noteOffSynthPreviewMidi) {
+                context.noteOffSynthPreviewMidi(context.synthLastPointerMidi);
+            }
             context.synthPointerDown = false;
             context.synthLastPointerMidi = -1;
             if (context.synthParamDragDirty) {

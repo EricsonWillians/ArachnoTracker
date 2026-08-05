@@ -5,48 +5,65 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
-#include "ui/gui/GuiInstrumentBrowserOps.h"
 #include "Note.h"
+#include "ui/gui/GuiInstrumentBrowserOps.h"
 
 namespace arachno {
 
 namespace {
 
-std::string instrumentCategoryFromName(const std::string& name) {
-    const std::string lowered = [&name]() {
-        std::string value = name;
-        for (char& ch : value) {
-            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        }
-        return value;
-    }();
-    const auto token = [&](const std::string& value) {
-        return lowered.find(value) != std::string::npos;
-    };
-    if (token("kick") || token("snare") || token("hat") || token("tom") || token("crash") || token("ride")) {
-        return "Percussion";
+int instrumentCategoryRank(const std::string& category) {
+    if (category == "Percussion") {
+        return 0;
     }
-    if (token("bass") || token("sub") || token("ebm") || token("reese")) {
-        return "Bass";
+    if (category == "Bass") {
+        return 1;
     }
-    if (token("lead") || token("solo") || token("arp") || token("pluck")) {
-        return "Lead";
+    if (category == "Lead") {
+        return 2;
     }
-    if (token("pad") || token("drone") || token("stabs") || token("soundscape") || token("choir") || token("bell")) {
-        return "Pads";
+    if (category == "Pads") {
+        return 3;
     }
-    if (token("clap") || token("shaker") || token("noise")) {
+    if (category == "Strings") {
+        return 4;
+    }
+    if (category == "Brass") {
+        return 5;
+    }
+    if (category == "Guitar") {
+        return 6;
+    }
+    if (category == "FX") {
+        return 7;
+    }
+    return 8;
+}
+
+std::string instrumentCategoryShortLabel(const std::string& category) {
+    if (category == "Percussion") {
+        return "DRUM";
+    }
+    if (category == "Bass") {
+        return "BASS";
+    }
+    if (category == "Lead") {
+        return "LEAD";
+    }
+    if (category == "Pads") {
+        return "PAD";
+    }
+    if (category == "Strings") {
+        return "STR";
+    }
+    if (category == "Brass") {
+        return "BRASS";
+    }
+    if (category == "Guitar") {
+        return "GTR";
+    }
+    if (category == "FX") {
         return "FX";
-    }
-    if (token("guitar")) {
-        return "Guitar";
-    }
-    if (token("strings") || token("violin") || token("orchestra")) {
-        return "Strings";
-    }
-    if (token("brass") || token("trumpet") || token("sax") || token("horn")) {
-        return "Brass";
     }
     return "MIDI";
 }
@@ -60,16 +77,28 @@ int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
     };
 
     const AppSessionSnapshot& snap = context.snapshot;
+    const auto describeInstrument = [&](int index) -> std::string {
+        if (index < 0 || index >= static_cast<int>(snap.editor.instruments.size())) {
+            return "unset";
+        }
+        const InstrumentSummary& instrument = snap.editor.instruments[static_cast<std::size_t>(index)];
+        std::ostringstream stream;
+        stream << "I" << (index < 10 ? "0" : "") << index << "  "
+               << instrumentCategoryFromName(instrument.name) << "  " << instrument.name;
+        return stream.str();
+    };
 
     sidebarLine("ACTIVE STEP");
     std::ostringstream step;
     step << "Row " << snap.editor.activeStep.row << " Track " << snap.editor.activeStep.trackName;
     sidebarLine(step.str(), true);
+    const int activeStepInstrument = (snap.editor.activeStep.instrument >= 0)
+        ? snap.editor.activeStep.instrument
+        : context.armedInstrument;
     sidebarLine(
         snap.editor.activeStep.hasNote
-            ? ("Note " + snap.editor.activeStep.noteName + "  Inst "
-                + std::to_string(snap.editor.activeStep.instrument))
-            : "Note ---  Inst --");
+            ? ("Note " + snap.editor.activeStep.noteName + "  uses  " + describeInstrument(activeStepInstrument))
+            : "Note ---  uses  " + describeInstrument(activeStepInstrument));
     {
         std::ostringstream vel;
         vel << "Velocity " << static_cast<int>(snap.editor.activeStep.velocity * 100.0f)
@@ -107,7 +136,8 @@ int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
         const int blackKeyHeight = 24;
         const int pianoX = context.sidebarLeft + 8;
         const int pianoY = sy - 12;
-        const int baseMidi = std::clamp(context.armedOctave * 12, 0, 115);
+        // Display convention (midiNoteName: 60 = C4): armed octave N starts at (N + 1) * 12.
+        const int baseMidi = std::clamp((context.armedOctave + 1) * 12, 0, 115);
         const int whiteSemitones[7] = {0, 2, 4, 5, 7, 9, 11};
         const int blackSemitones[5] = {1, 3, 6, 8, 10};
         const int blackXOffsets[5] = {11, 27, 59, 75, 91};
@@ -168,6 +198,19 @@ int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
         context.followPlayback ? "FOLLOW ON" : "FOLLOW OFF",
         context.followPlayback);
     sy += 18;
+
+    context.legatoButton = UiRect {context.sidebarLeft + 8, sy - 10, 112, 20};
+    context.drawButton(
+        context.legatoButton,
+        snap.editor.status.legatoInput ? "LEGATO ON" : "LEGATO OFF",
+        snap.editor.status.legatoInput);
+    context.drawText(
+        context.sidebarLeft + 126,
+        sy + 4,
+        "(L) sustain",
+        context.colorMutedText);
+    sy += 18;
+    sidebarLine("Legato sustains to next note/===", true);
 
     sidebarLine("");
     sidebarLine("TRACK METADATA");
@@ -257,7 +300,7 @@ int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
     sidebarLine("Build extends order; trim removes tail order", true);
 
     sidebarLine("");
-    sidebarLine("MIDI IMPORT PRESET");
+    sidebarLine("MIDI IMPORT SETTINGS");
     {
         std::ostringstream line;
         line << "Rows/beat " << context.midiImportRowsPerBeat;
@@ -286,30 +329,38 @@ int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
     }
     {
         const int buttonY = sy - 12;
-        const UiRect splitRect {context.sidebarLeft + 8, buttonY, 116, 20};
-        const UiRect importRect {context.sidebarLeft + 128, buttonY, 116, 20};
+        const UiRect splitRect {context.sidebarLeft + 8, buttonY, 232, 20};
         context.drawButton(
             splitRect,
             context.midiImportSplitByTrack ? "SPLIT TRACKS" : "MERGE LANES",
             context.midiImportSplitByTrack);
-        context.drawButton(importRect, "IMPORT MIDI", false);
         context.midiImportSettingHits.push_back({splitRect, "split_toggle"});
-        context.midiImportSettingHits.push_back({importRect, "import"});
         sy += 22;
     }
-    sidebarLine("Use Ctrl+M to open picker", true);
+    sidebarLine("Applied when loading .mid via LOAD", true);
 
     sidebarLine("");
     sidebarLine("INSTRUMENTS");
-    const int listRows = std::max(3, (context.gridTop + context.gridHeight - sy - 142) / 16);
-    context.instrumentListVisibleRows = listRows;
-    context.clampInstrumentListWindow();
-    const std::vector<int> orderedInstrumentIndices = filteredInstrumentIndicesForQuery(snap, "");
-    const int instrumentCount = static_cast<int>(orderedInstrumentIndices.size());
-    const UiRect instPrevRect {context.sidebarLeft + 8, sy - 12, 28, 20};
-    const UiRect instNextRect {context.sidebarLeft + 40, sy - 12, 28, 20};
-    const UiRect instAudRect {context.sidebarLeft + 72, sy - 12, 48, 20};
-    const UiRect instBrowseRect {context.sidebarLeft + 124, sy - 12, 84, 20};
+    const int projectInstrumentCount = static_cast<int>(snap.editor.instruments.size());
+    if (projectInstrumentCount > 0 && context.armedInstrument >= 0 && context.armedInstrument < projectInstrumentCount) {
+        const InstrumentSummary& armed = snap.editor.instruments[static_cast<std::size_t>(context.armedInstrument)];
+        std::ostringstream armedLine;
+        armedLine << "ARMED " << (context.armedInstrument < 10 ? "0" : "") << context.armedInstrument
+                  << "  " << instrumentCategoryFromName(armed.name) << "  " << armed.name;
+        sidebarLine(armedLine.str());
+        sidebarLine("Next painted note target: " + describeInstrument(context.armedInstrument), true);
+    } else {
+        sidebarLine("ARMED -- none", true);
+        sidebarLine("Open browser to add one.", true);
+    }
+
+    const int controlsY = sy;
+    const int controlHeight = 20;
+    const int controlRowY = controlsY + 4;
+    const UiRect instPrevRect {context.sidebarLeft + 8, controlRowY, 26, controlHeight};
+    const UiRect instNextRect {context.sidebarLeft + 38, controlRowY, 26, controlHeight};
+    const UiRect instAudRect {context.sidebarLeft + 68, controlRowY, 56, controlHeight};
+    const UiRect instBrowseRect {context.sidebarLeft + 128, controlRowY, 66, controlHeight};
     context.drawButton(instPrevRect, "<", false);
     context.drawButton(instNextRect, ">", false);
     context.drawButton(instAudRect, "AUD", false);
@@ -318,6 +369,41 @@ int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
     context.instrumentControlHits.push_back({instNextRect, "next"});
     context.instrumentControlHits.push_back({instAudRect, "audition"});
     context.instrumentControlHits.push_back({instBrowseRect, "browse"});
+
+    sy = controlsY + controlHeight + 8;
+    sidebarLine("Use controls: [< >] arm | AUD audition | BROWSE pick");
+    sidebarLine("Use Alt+0..9 direct or Ctrl+Shift+I");
+    const UiRect instLoadPatchRect {context.sidebarLeft + 8, sy - 12, 112, 20};
+    const UiRect instAddPatchRect {context.sidebarLeft + 128, sy - 12, 112, 20};
+    context.drawButton(instLoadPatchRect, "LOAD PATCH", false);
+    context.drawButton(instAddPatchRect, "ADD PATCH", false);
+    context.instrumentControlHits.push_back({instLoadPatchRect, "load_patch"});
+    context.instrumentControlHits.push_back({instAddPatchRect, "add_patch"});
+    sy += 22;
+    sidebarLine("LOAD replaces armed slot | ADD imports new", true);
+
+    sidebarLine("");
+    const int listRows = std::max(3, (context.gridTop + context.gridHeight - sy - 142) / 16);
+    context.instrumentListVisibleRows = listRows;
+    context.clampInstrumentListWindow();
+    std::vector<std::pair<int, std::string>> orderedInstrumentRows;
+    orderedInstrumentRows.reserve(projectInstrumentCount);
+    for (int index = 0; index < projectInstrumentCount; ++index) {
+        const InstrumentSummary& instrument = snap.editor.instruments[static_cast<std::size_t>(index)];
+        orderedInstrumentRows.push_back({index, instrumentCategoryFromName(instrument.name)});
+    }
+    std::sort(orderedInstrumentRows.begin(), orderedInstrumentRows.end(), [](const auto& left, const auto& right) {
+        const int leftRank = instrumentCategoryRank(left.second);
+        const int rightRank = instrumentCategoryRank(right.second);
+        if (leftRank != rightRank) {
+            return leftRank < rightRank;
+        }
+        if (left.second != right.second) {
+            return left.second < right.second;
+        }
+        return left.first < right.first;
+    });
+    const int instrumentCount = static_cast<int>(orderedInstrumentRows.size());
     if (instrumentCount > 0) {
         const int viewStart = std::clamp(context.instrumentListStart, 0, std::max(0, instrumentCount - 1));
         const int viewEnd = std::min(instrumentCount, viewStart + listRows);
@@ -327,52 +413,50 @@ int drawMainSidebarSections(const GuiMainSidebarDrawContext& context, int sy) {
     } else {
         context.drawText(context.sidebarLeft + 214, sy, "0 instruments", context.colorMutedText);
     }
-    sy += 20;
-    const int listTop = sy - 12;
+    const int listTop = sy + 4;
     const int listHeight = listRows * 16;
     context.instrumentListRect = UiRect {context.sidebarLeft + 6, listTop, context.sidebarWidth - 14, listHeight};
 
     const int viewStart = std::clamp(context.instrumentListStart, 0, std::max(0, instrumentCount - 1));
     const int viewEnd = std::min(instrumentCount, viewStart + listRows);
+    const int rowHeight = 16;
+    const int firstRowY = listTop + 2;
     for (int index = viewStart; index < viewEnd; ++index) {
-        const int instrumentIndex = orderedInstrumentIndices[static_cast<std::size_t>(index)];
-        const bool isStandardMidi = isStandardMidiBrowserIndex(instrumentIndex);
-        std::string category;
-        std::string name;
+        const int rowOffset = index - viewStart;
+        const int rowY = firstRowY + (rowOffset * rowHeight);
+        const int instrumentIndex = orderedInstrumentRows[static_cast<std::size_t>(index)].first;
+        const InstrumentSummary& instrument = snap.editor.instruments[static_cast<std::size_t>(instrumentIndex)];
+        const std::string section = orderedInstrumentRows[static_cast<std::size_t>(index)].second;
         int noteUseCount = 0;
-        bool active = false;
-        if (isStandardMidi) {
-            category = standardMidiBrowserCategory(instrumentIndex);
-            name = standardMidiBrowserName(instrumentIndex);
-        } else {
-            const InstrumentSummary& instrument = snap.editor.instruments[static_cast<std::size_t>(instrumentIndex)];
-            category = instrumentCategoryFromName(instrument.name);
-            name = instrument.name;
-            noteUseCount = instrument.noteUseCount;
-            active = instrument.active;
-        }
-        const UiRect hit {context.sidebarLeft + 6, sy - 12, context.sidebarWidth - 14, 16};
-        if (instrumentIndex == context.armedInstrument || active) {
+        const bool active = instrument.active;
+        noteUseCount = instrument.noteUseCount;
+        const bool isArmed = instrumentIndex == context.armedInstrument;
+        const UiRect hit {context.sidebarLeft + 6, rowY, context.sidebarWidth - 14, rowHeight};
+        if (isArmed || active) {
             context.drawFilledRect(hit.x, hit.y + 1, hit.width, hit.height - 2, context.colorSelection);
         }
         std::ostringstream line;
-        line << (instrumentIndex == context.armedInstrument ? "*" : " ")
-             << (active ? ">" : " ")
-             << " ["
-             << category
-             << "] "
+        line << (isArmed ? "> " : "  ")
+             << "[" << instrumentCategoryShortLabel(section) << "] "
+             << (active ? "[R]" : "   ")
+             << "  "
              << (instrumentIndex < 10 ? "0" : "") << instrumentIndex
              << " "
-             << name
-             << " (" << noteUseCount << ")";
+             << instrument.name
+             << "  "
+             << instrumentCategoryFromName(instrument.name)
+             << "  "
+             << noteUseCount
+             << "x";
         context.drawText(
             context.sidebarLeft + 8,
-            sy,
+            rowY,
             line.str(),
             instrumentIndex == context.armedInstrument ? context.colorText : context.colorMutedText);
         context.instrumentHitTargets.push_back({hit, instrumentIndex});
-        sy += 16;
     }
+
+    sy += (viewEnd - viewStart) * rowHeight;
     if (instrumentCount > viewEnd) {
         context.drawText(context.sidebarLeft + 8, sy, "...", context.colorMutedText);
         sy += 16;

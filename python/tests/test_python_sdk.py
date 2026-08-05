@@ -76,7 +76,7 @@ class PythonSdkTests(unittest.TestCase):
             self.assertIn("arachno_project 1", project_text)
             self.assertIn('"Python EBM Sketch"', project_text)
             self.assertIn(" 1 0.75 3 0.12 0.7", project_text)
-            self.assertIn("arachno_patch 1", patch_text)
+            self.assertIn("arachno_patch 2", patch_text)
             self.assertIn('"Plugin Bass"', patch_text)
             self.assertEqual(loaded_song.title, "Python EBM Sketch")
             self.assertEqual(loaded_song.tracks[drums].name, "Drums")
@@ -91,6 +91,139 @@ class PythonSdkTests(unittest.TestCase):
             self.assertEqual(loaded_patch.name, "Plugin Bass")
             self.assertEqual(loaded_patch.oscillator_a, at.Waveform.SAW)
             self.assertEqual(loaded_patch.drive, 0.4)
+
+    def test_note_off_step_and_string_presets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            song = at.Song(title="Note Off", bpm=120, rows_per_beat=4)
+            track = song.add_track("Lead")
+            instrument = song.add_instrument(at.presets.classic_strings())
+            pattern = at.Pattern("P", rows=16, tracks=len(song.tracks))
+            note = pattern.step(0, track)
+            note.midi = at.note_name_to_midi("C4")
+            note.instrument = instrument
+            off = pattern.step(8, track)
+            off.note_off = True
+            song.add_pattern(pattern)
+            song.order = [0]
+
+            project = tmp_path / "noteoff.arachno"
+            at.save_project(song, project)
+            loaded = at.load_project(project)
+            loaded_off = loaded.patterns[0].steps[(8, track)]
+            self.assertTrue(loaded_off.note_off)
+            self.assertIsNone(loaded_off.midi)
+            self.assertFalse(loaded_off.empty)
+            self.assertFalse(loaded.patterns[0].steps[(0, track)].note_off)
+
+            # Legacy step lines without the trailing note-off token must still load.
+            legacy_lines = []
+            for line in project.read_text(encoding="utf-8").splitlines():
+                if line.startswith("step 8 "):
+                    line = line.rsplit(" ", 1)[0]
+                legacy_lines.append(line)
+            legacy = tmp_path / "legacy.arachno"
+            legacy.write_text("\n".join(legacy_lines) + "\n", encoding="utf-8")
+            legacy_loaded = at.load_project(legacy)
+            self.assertFalse(legacy_loaded.patterns[0].steps[(8, track)].note_off)
+
+            for builder in (
+                at.presets.classic_strings,
+                at.presets.synth_strings_85,
+                at.presets.analog_string_machine,
+            ):
+                patch = builder()
+                self.assertGreater(patch.amp_envelope.sustain, 0.5)
+                self.assertGreater(patch.amp_envelope.release, 0.3)
+                patch_path = tmp_path / f"{patch.name}.arachnopatch"
+                at.save_patch(patch, patch_path)
+                self.assertEqual(at.load_patch(patch_path).name, patch.name)
+
+    def test_extended_patch_fields_round_trip(self):
+        # Non-default values across the newly exposed engine surface (must
+        # survive both the .arachnopatch and the .arachno project round-trips).
+        expected = {
+            "oscillator_c": at.Waveform.SAW,
+            "oscillator_c_enabled": True,
+            "oscillator_c_mix": 0.4,
+            "detune_c_cents": -11.0,
+            "oscillator_d": at.Waveform.TRIANGLE,
+            "oscillator_d_enabled": True,
+            "oscillator_d_mix": 0.31,
+            "detune_d_cents": 9.0,
+            "osc_b_ratio": 3.98,
+            "osc_c_ratio": 0.51,
+            "osc_d_ratio": 2.02,
+            "osc_b_decay": 0.12,
+            "osc_c_decay": 0.23,
+            "osc_d_decay": 0.34,
+            "velocity_to_decay": 0.6,
+            "key_track_decay": 0.7,
+            "analog_color": 0.11,
+            "reverb_tone": 0.33,
+            "filter_mode": 3,
+            "fm_feedback": 0.22,
+            "fm_algorithm": 2,
+            "wavefold": 0.17,
+            "comb_mix": 0.29,
+            "delay_tone": 0.71,
+            "chorus_feedback": 0.19,
+            "osc_b_level": 0.62,
+            "osc_c_pulse_width": 0.61,
+            "osc_d_pwm_depth": 0.14,
+            "osc_a_drive": 0.09,
+            "vintage_drift": 0.21,
+            "tone_tilt": 0.13,
+            "delay_ducking": 0.18,
+            "reverb_shimmer": 0.27,
+            "tape_color": 0.37,
+            "unison_warp": 0.29,
+            "fm_color": 0.63,
+            "chorus_jitter": 0.31,
+            "delay_wow": 0.11,
+            "reverb_bloom": 0.43,
+            "stereo_depth": 0.39,
+            "output_transformer": 0.28,
+            "output_soft_clip": 0.44,
+        }
+        # Patch-file-only fields (the project instrument chain omits the
+        # velocity expression block by design).
+        patch_file_only = {
+            "velocity_to_amp": 0.5,
+            "velocity_to_filter": 0.41,
+            "velocity_to_attack": 0.32,
+            "velocity_curve": 2,
+            "filter_keytrack_resonance": 0.19,
+            "filter_nonlinearity": 0.47,
+            "amp_envelope_curve": 1,
+            "filter_envelope_curve": 2,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            patch = at.SynthPatch(name="Extended Round Trip", **expected, **patch_file_only)
+
+            patch_path = tmp_path / "extended.arachnopatch"
+            at.save_patch(patch, patch_path)
+            loaded_patch = at.load_patch(patch_path)
+            for attr, value in {**expected, **patch_file_only}.items():
+                self.assertEqual(getattr(loaded_patch, attr), value, f"patch file field {attr}")
+
+            song = at.Song(title="Extended", bpm=120, rows_per_beat=4)
+            track = song.add_track("Lead")
+            instrument = song.add_instrument(patch)
+            pattern = at.Pattern("P", rows=8, tracks=len(song.tracks))
+            step = pattern.step(0, track)
+            step.midi = at.note_name_to_midi("C4")
+            step.instrument = instrument
+            song.add_pattern(pattern)
+            song.order = [0]
+
+            project_path = tmp_path / "extended.arachno"
+            at.save_project(song, project_path)
+            loaded_song = at.load_project(project_path)
+            loaded_instrument = loaded_song.instruments[instrument]
+            for attr, value in expected.items():
+                self.assertEqual(getattr(loaded_instrument, attr), value, f"project field {attr}")
 
     def test_edit_script_writer(self):
         with tempfile.TemporaryDirectory() as tmp:

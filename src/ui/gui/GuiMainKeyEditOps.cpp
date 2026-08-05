@@ -18,7 +18,7 @@ GuiMainKeyEditResult handleMainKeyEditOps(const GuiMainKeyEditContext& context) 
             if (!context.synthWindowVisible) {
                 context.applyArmedOctaveToSelection();
             } else {
-                context.synthPreviewMidi = std::clamp((context.armedOctave * 12) + (context.synthPreviewMidi % 12), 0, 127);
+                context.synthPreviewMidi = std::clamp(((context.armedOctave + 1) * 12) + (context.synthPreviewMidi % 12), 0, 127);
                 context.paintNoteMidi = context.synthPreviewMidi;
                 context.ensureSynthKeyboardShowsMidi(context.synthPreviewMidi);
                 result.synthWindowNeedsRedraw = true;
@@ -118,6 +118,12 @@ GuiMainKeyEditResult handleMainKeyEditOps(const GuiMainKeyEditContext& context) 
     }
     if (context.key == XK_backslash) {
         context.auditionArmedInstrument();
+        result.consumed = true;
+        result.needsRedraw = true;
+        return result;
+    }
+    if (!context.ctrlDown && !context.altDown && normalizeLetterKey(context.key) == XK_l) {
+        context.runActionById("editor.step.legato");
         result.consumed = true;
         result.needsRedraw = true;
         return result;

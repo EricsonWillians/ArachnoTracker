@@ -1,7 +1,10 @@
 #include "ui/gui/GuiMainSidebarContextFactoryOps.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <sstream>
+
+#include "ui/gui/GuiPathDefaults.h"
 
 namespace arachno {
 
@@ -22,6 +25,7 @@ GuiMainSidebarClickContext makeMainSidebarClickContextFromState(const GuiMainSid
         input.patternRowsPlus,
         input.patternRowsValue,
         input.stepAdvanceButton,
+        input.legatoButton,
         input.followPlaybackButton,
         input.draggingPatternRows,
         input.patternResizeAnchorY,
@@ -43,6 +47,11 @@ GuiMainSidebarClickContext makeMainSidebarClickContextFromState(const GuiMainSid
         [state](int midi) {
             state.paintNoteMidi = midi;
             const AppSessionSnapshot snap = state.activeSnapshot();
+            const int count = static_cast<int>(snap.editor.instruments.size());
+            if (count > 0) {
+                const int resolvedInstrument = std::clamp(state.armedInstrument, 0, count - 1);
+                state.selectInstrument(resolvedInstrument);
+            }
             state.paintNoteAt(snap.editor.status.cursorRow, snap.editor.status.cursorTrack, state.paintNoteMidi);
             if (state.stepAdvance) {
                 state.ensurePatternRowsForRow(snap.editor.status.cursorRow + 1);
@@ -87,8 +96,6 @@ GuiMainSidebarClickContext makeMainSidebarClickContextFromState(const GuiMainSid
                 state.midiImportPatternRows = std::min(8192, state.midiImportPatternRows + 16);
             } else if (role == "split_toggle") {
                 state.midiImportSplitByTrack = !state.midiImportSplitByTrack;
-            } else if (role == "import") {
-                state.runFileButtonAction("import.midi");
             }
         },
         [state](const std::string& role) {
@@ -96,23 +103,45 @@ GuiMainSidebarClickContext makeMainSidebarClickContextFromState(const GuiMainSid
                 const AppSessionSnapshot snap = state.activeSnapshot();
                 const int count = static_cast<int>(snap.editor.instruments.size());
                 if (count > 0) {
-                    state.armedInstrument = (state.armedInstrument + count - 1) % count;
-                    state.selectInstrument(state.armedInstrument);
+                    const int armed = std::clamp(state.armedInstrument, 0, std::max(0, count - 1));
+                    state.selectInstrument((armed + count - 1) % count);
                 }
             } else if (role == "next") {
                 const AppSessionSnapshot snap = state.activeSnapshot();
                 const int count = static_cast<int>(snap.editor.instruments.size());
                 if (count > 0) {
-                    state.armedInstrument = (state.armedInstrument + 1) % count;
-                    state.selectInstrument(state.armedInstrument);
+                    const int armed = std::clamp(state.armedInstrument, 0, std::max(0, count - 1));
+                    state.selectInstrument((armed + 1) % count);
                 }
             } else if (role == "audition") {
                 state.auditionArmedInstrument();
             } else if (role == "browse") {
                 state.openInstrumentBrowser();
+            } else if (role == "load_patch" || role == "add_patch") {
+                const AppSessionSnapshot snap = state.activeSnapshot();
+                const int count = static_cast<int>(snap.editor.instruments.size());
+                if (role == "load_patch" && count <= 0) {
+                    return;
+                }
+                const int armed = count > 0 ? std::clamp(state.armedInstrument, 0, count - 1) : -1;
+                const bool replace = role == "load_patch";
+                state.beginInlinePrompt(
+                    replace ? InlinePromptKind::ImportPatchReplacePath : InlinePromptKind::ImportPatchAsNewPath,
+                    replace ? "Load patch into armed instrument" : "Import patch as new instrument",
+                    "Path to .arachnopatch",
+                    defaultPatchPath(
+                        snap.hasProjectPath,
+                        snap.projectPath,
+                        replace && armed >= 0
+                            ? snap.editor.instruments[static_cast<std::size_t>(armed)].name
+                            : patchStemFromName("imported_patch"),
+                        std::filesystem::current_path()),
+                    -1,
+                    armed);
             }
         },
-        [state](int instrumentIndex) { state.selectInstrument(instrumentIndex); }};
+        [state](int instrumentIndex) { state.selectInstrument(instrumentIndex); },
+        [state]() { state.runActionById("editor.step.legato"); }};
 }
 
 } // namespace arachno

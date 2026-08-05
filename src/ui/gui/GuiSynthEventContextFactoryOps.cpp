@@ -118,6 +118,7 @@ GuiSynthWindowEventContext makeSynthWindowEventContextFromState(
         input.triggerSynthKeyboardPointer,
         input.handleSynthWindowClick,
         input.refreshSnapshot,
+        input.noteOffSynthPreviewMidi,
         input.clampInstrumentIndex,
         input.findSynthParamDef,
         input.setSynthParameter,

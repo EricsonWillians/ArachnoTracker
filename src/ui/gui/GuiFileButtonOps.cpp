@@ -29,6 +29,11 @@ void runFileButtonAction(const GuiFileButtonContext& context, const std::string&
         context.runLifecycleAction(makeActionRequest("project.new"));
         return;
     }
+    if (actionId == "project.close") {
+        context.audioTuningDialogActive = false;
+        context.runLifecycleAction(makeActionRequest("project.close"));
+        return;
+    }
     if (actionId == "project.save") {
         context.audioTuningDialogActive = false;
         if (snap.hasProjectPath) {
@@ -71,7 +76,7 @@ void runFileButtonAction(const GuiFileButtonContext& context, const std::string&
         context.beginInlinePrompt(
             InlinePromptKind::ImportMidiPath,
             "Import MIDI file",
-            "Path to .mid/.midi file (uses sidebar MIDI import preset)",
+            "Path to .mid/.midi file (uses sidebar MIDI import settings)",
             defaultMidiImportPath(snap.hasProjectPath, snap.projectPath),
             -1,
             -1);

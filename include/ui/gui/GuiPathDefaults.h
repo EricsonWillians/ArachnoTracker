@@ -18,6 +18,9 @@ std::string defaultPatchBulkPath(
     bool hasProjectPath,
     const std::string& projectPath,
     const std::filesystem::path& workingDir);
+// User-level settings file: $XDG_CONFIG_HOME/arachnotracker/settings.txt
+// (fallback: ~/.config/arachnotracker/settings.txt).
+std::filesystem::path defaultSettingsPath();
 
 } // namespace arachno
 

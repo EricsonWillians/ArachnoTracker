@@ -28,6 +28,7 @@ struct GuiMainSidebarContextFactoryInput {
     UiRect& patternRowsPlus;
     UiRect& patternRowsValue;
     UiRect& stepAdvanceButton;
+    UiRect& legatoButton;
     UiRect& followPlaybackButton;
 
     bool& draggingPatternRows;

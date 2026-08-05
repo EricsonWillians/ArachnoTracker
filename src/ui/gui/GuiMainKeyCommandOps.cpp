@@ -140,6 +140,12 @@ GuiMainKeyCommandResult handleMainKeyCommands(const GuiMainKeyCommandContext& co
         result.needsRedraw = true;
         return result;
     }
+    if (context.ctrlDown && normalizeLetterKey(context.key) == XK_w && !context.shiftDown) {
+        context.runFileButtonAction("project.close");
+        result.consumed = true;
+        result.needsRedraw = true;
+        return result;
+    }
     if (context.ctrlDown && normalizeLetterKey(context.key) == XK_s && !context.shiftDown) {
         context.runFileButtonAction("project.save");
         result.consumed = true;

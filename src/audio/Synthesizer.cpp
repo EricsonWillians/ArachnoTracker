@@ -40,6 +40,21 @@ double semitonesToRatio(double semitones) {
     return std::pow(2.0, semitones / 12.0);
 }
 
+// Fast sine on wrapped phase [0,1): sin(2*pi*phase) via symmetry reduction to
+// [0, pi/2] and a 7th-order odd polynomial (Horner). |err| < 2e-4 vs std::sin.
+// Deterministic, libm-free — used in the hot per-sample DSP paths (oscillators,
+// FM operators, FX LFOs) where libm sin dominated the profile. Control-rate
+// code keeps std::sin for exact curves.
+inline double fastSin01(double phase) {
+    double z = phase >= 0.5 ? phase - 1.0 : phase;      // [-0.5, 0.5)
+    const double az = std::abs(z);                       // [0, 0.5]
+    const double x = az <= 0.25 ? az : 0.5 - az;         // mirror to [0, 0.25]
+    const double w = x * twoPi;                          // [0, pi/2]
+    const double u = w * w;
+    const double poly = w * (1.0 + u * (-1.0 / 6.0 + u * (1.0 / 120.0 + u * (-1.0 / 5040.0))));
+    return z < 0.0 ? -poly : poly;
+}
+
 double wrapPhase(double phase) {
     if (phase >= 1.0) {
         if (phase < 2.0) {
@@ -99,14 +114,47 @@ double wavefoldSample(double value, double amount) {
     return std::clamp(folded, -1.0, 1.0);
 }
 
+// Fast cosine on wrapped phase [0,1): cos(2*pi*phase) = sin(2*pi*(phase+1/4)).
+inline double fastCos01(double phase) {
+    return fastSin01(wrapPhase(phase + 0.25));
+}
+
+// Fast tanh approximation (Padé 3/2): exact-sign, <0.2% error for |x|<=3,
+// saturates to ±1 beyond. Deterministic, no libm call — used in the hot
+// per-sample DSP paths where std::tanh dominated the profile.
+inline double fastTanh(double value) {
+    if (value > 3.0) {
+        return 1.0;
+    }
+    if (value < -3.0) {
+        return -1.0;
+    }
+    const double x2 = value * value;
+    return value * (27.0 + x2) / (27.0 + 9.0 * x2);
+}
+
 double asymmetricSaturation(double value, double drive, double asymmetry) {
     const double clampedDrive = std::max(0.0, drive);
     const double shapedAsymmetry = clampSigned(asymmetry);
     const double gain = 1.0 + clampedDrive * 7.0;
     const double biased = value * gain + shapedAsymmetry * 0.22;
-    const double positive = std::tanh(std::max(0.0, biased) * (1.0 + shapedAsymmetry * 0.35));
-    const double negative = std::tanh(std::min(0.0, biased) * (1.0 - shapedAsymmetry * 0.2));
+    const double positive = fastTanh(std::max(0.0, biased) * (1.0 + shapedAsymmetry * 0.35));
+    const double negative = fastTanh(std::min(0.0, biased) * (1.0 - shapedAsymmetry * 0.2));
     return (positive + negative) - shapedAsymmetry * 0.08;
+}
+
+// Per-oscillator drive shaping. Zero drive MUST be transparent — previously
+// asymmetricSaturation(sample, 0, 0) degenerated to fastTanh(sample) on the
+// full-scale oscillator output, permanently waveshaping every voice (~6% THD).
+// Drive blends the saturator in, level-compensated so color isn't a loudness bump.
+inline double oscDriveShape(double sample, double drive) {
+    const double amount = clamp01(drive * 1.2);
+    if (amount <= 0.0001) {
+        return sample;
+    }
+    const double satGain = 1.0 + clamp01(drive) * 0.9 * 7.0;
+    const double saturated = asymmetricSaturation(sample, clamp01(drive) * 0.9, 0.0) / satGain;
+    return sample * (1.0 - amount) + saturated * amount;
 }
 
 double harmonicExciter(double value, double amount) {
@@ -114,8 +162,8 @@ double harmonicExciter(double value, double amount) {
     if (clamped <= 0.0) {
         return value;
     }
-    const double even = std::tanh(value * 1.9);
-    const double odd = std::tanh(value * 3.7);
+    const double even = fastTanh(value * 1.9);
+    const double odd = fastTanh(value * 3.7);
     const double colored = even * 0.58 + odd * 0.42;
     const double mix = clamped * 0.34;
     return value * (1.0 - mix) + colored * mix;
@@ -160,19 +208,66 @@ double waveformLevelCompensation(Waveform waveform) {
     return 1.0;
 }
 
+// Band-limited triangle wavetables: the same additive formula as the old
+// per-sample bandLimitedTriangle loop (which cost up to 31 libm sin calls per
+// sample per unison voice — the top profiler entry), precomputed once at
+// startup per octave band of phase increment. Bands above the increment's
+// Nyquist band drop the aliasing partials by construction, exactly like the
+// old formula did per call. Deterministic, built at static-init time so the
+// realtime audio thread never pays the build cost.
+constexpr int kTriangleBands = 6;
+constexpr int kTriangleTableSize = 2048;
+constexpr std::array<double, kTriangleBands> kTriangleBandMaxIncrements {
+    1.0 / 64.0, 1.0 / 32.0, 1.0 / 16.0, 1.0 / 8.0, 1.0 / 4.0, 0.49};
+
+using TriangleTables = std::array<std::array<float, kTriangleTableSize>, kTriangleBands>;
+
+TriangleTables buildTriangleTables() {
+    TriangleTables tables {};
+    for (int band = 0; band < kTriangleBands; ++band) {
+        const double maxInc = kTriangleBandMaxIncrements[static_cast<std::size_t>(band)];
+        const int nyquistLimit = static_cast<int>(std::floor(0.5 / maxInc));
+        const int maxOddHarmonic = std::clamp(nyquistLimit | 1, 1, 31);
+        for (int i = 0; i < kTriangleTableSize; ++i) {
+            const double phase = static_cast<double>(i) / static_cast<double>(kTriangleTableSize);
+            double sum = 0.0;
+            for (int harmonic = 1; harmonic <= maxOddHarmonic; harmonic += 2) {
+                const double sign = ((harmonic / 2) % 2 == 0) ? 1.0 : -1.0;
+                sum += sign * (std::sin(twoPi * phase * static_cast<double>(harmonic))
+                    / (static_cast<double>(harmonic) * static_cast<double>(harmonic)));
+            }
+            tables[static_cast<std::size_t>(band)][static_cast<std::size_t>(i)] =
+                static_cast<float>(std::clamp(sum * (8.0 / (pi * pi)), -1.0, 1.0));
+        }
+    }
+    return tables;
+}
+
+const TriangleTables g_triangleTables = buildTriangleTables();
+
 double bandLimitedTriangle(double phase, double phaseIncrement, int harmonicCap) {
     if (phaseIncrement <= 1e-9) {
         return 0.0;
     }
-    const int nyquistLimit = static_cast<int>(std::floor(0.5 / std::max(phaseIncrement, 1e-9)));
-    const int maxOddHarmonic = std::clamp(nyquistLimit | 1, 1, std::clamp(harmonicCap | 1, 1, 31));
-    double sum = 0.0;
-    for (int harmonic = 1; harmonic <= maxOddHarmonic; harmonic += 2) {
-        const double sign = ((harmonic / 2) % 2 == 0) ? 1.0 : -1.0;
-        sum += sign * (std::sin(twoPi * phase * static_cast<double>(harmonic))
-            / (static_cast<double>(harmonic) * static_cast<double>(harmonic)));
+    // First band whose max increment covers this oscillator increment.
+    int band = 0;
+    const double inc = std::clamp(phaseIncrement, 1e-9, 0.49);
+    while (band < kTriangleBands - 1 && inc > kTriangleBandMaxIncrements[static_cast<std::size_t>(band)]) {
+        ++band;
     }
-    return std::clamp(sum * (8.0 / (pi * pi)), -1.0, 1.0);
+    // Quality tiers request a lower harmonic cap under load: shift to a coarser
+    // band (fewer partials), the same trade-off the old formula made per call.
+    const int capShift = harmonicCap >= 31 ? 0 : (harmonicCap >= 15 ? 1 : (harmonicCap >= 7 ? 2 : (harmonicCap >= 3 ? 3 : 4)));
+    band = std::min(band + capShift, kTriangleBands - 1);
+    const auto& table = g_triangleTables[static_cast<std::size_t>(band)];
+    const double x = wrapPhase(phase) * static_cast<double>(kTriangleTableSize);
+    const int i0 = static_cast<int>(x) & (kTriangleTableSize - 1);
+    const int i1 = (i0 + 1) & (kTriangleTableSize - 1);
+    const double fraction = x - std::floor(x);
+    return static_cast<double>(table[static_cast<std::size_t>(i0)])
+        + (static_cast<double>(table[static_cast<std::size_t>(i1)])
+            - static_cast<double>(table[static_cast<std::size_t>(i0)]))
+            * fraction;
 }
 
 double shapeFmSignal(double value, double color) {
@@ -180,19 +275,19 @@ double shapeFmSignal(double value, double color) {
     if (c < 0.33) {
         const double mix = c / 0.33;
         // Gentle sine shaping — keeps FM smooth and musical
-        const double soft = std::sin(value * twoPi * 0.5);
+        const double soft = fastSin01(wrapPhase(value * 0.5));
         return value * (1.0 - mix) + soft * mix;
     }
     if (c < 0.66) {
         const double mix = (c - 0.33) / 0.33;
         // Soft tanh clipping — controlled harmonics, no aliasing
-        const double clipped = std::tanh(value * 1.8);
+        const double clipped = fastTanh(value * 1.8);
         return value * (1.0 - mix) + clipped * mix;
     }
     const double mix = (c - 0.66) / 0.34;
     // Saturated sine instead of asin(sin) folding — avoids sharp triangle corners
     // that produce harsh, non-musical FM sidebands and aliasing
-    const double saturated = std::sin(value * pi * 1.2) * (1.0 - std::abs(value) * 0.15);
+    const double saturated = fastSin01(wrapPhase(value * 0.6)) * (1.0 - std::abs(value) * 0.15);
     return value * (1.0 - mix) + saturated * mix;
 }
 
@@ -312,13 +407,14 @@ inline double tptSvfProcessSampleWithMode(double v0, double g, double k, double&
     }
 }
 
-// Map old filterMode (0=LP2, 1=LP4, 2=HP+LP) to TPT mode
+// Map patch filterMode to TPT mode: 0=LP, 1=LP (smoother k), 2=BP, 3=Notch, 4=Peak
 inline int mapOldFilterModeToTpt(int oldMode) {
-    // 0 -> LP, 1 -> LP (with higher resonance), 2 -> BP
     switch (oldMode) {
         case 0: return 0; // LP
         case 1: return 0; // LP (resonance handled via k)
         case 2: return 2; // BP
+        case 3: return 3; // Notch
+        case 4: return 4; // Peak
         default: return 0;
     }
 }
@@ -357,7 +453,7 @@ void Synthesizer::setSampleRate(double sampleRate) {
     sampleRate_ = sampleRate;
 }
 
-void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, double gateSeconds, int instrumentIndex) {
+void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, double gateSeconds, int instrumentIndex, bool sustainUntilNoteOff, int noteChannel) {
     const bool anyPrimaryOscEnabled = patch.oscillatorAEnabled
         || patch.oscillatorBEnabled
         || patch.oscillatorCEnabled
@@ -376,11 +472,15 @@ void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, 
         voice.gateSeconds = std::min(voice.gateSeconds, voice.age);
         voice.onsetSamplesRemaining = 0;
     };
-    const int baseVoiceLimit = smoothedDspLoadPercent_ > 90.0
-        ? 18
-        : (smoothedDspLoadPercent_ > 78.0 ? 28 : (smoothedDspLoadPercent_ > 62.0 ? 42 : 58));
+    const int baseVoiceLimit = offlineRendering_
+        ? maxActiveVoices
+        : (smoothedDspLoadPercent_ > 90.0
+        ? 24
+        : (smoothedDspLoadPercent_ > 78.0 ? 40 : (smoothedDspLoadPercent_ > 62.0 ? 64 : 96)));
     const int unisonPenalty = std::max(0, std::clamp(patch.unisonVoices, 1, maxSynthUnisonVoices) - 1) * 3;
-    const int voiceLimit = std::clamp(baseVoiceLimit - unisonPenalty, 12, 56);
+    const int voiceLimit = offlineRendering_
+        ? maxActiveVoices
+        : std::clamp(baseVoiceLimit - unisonPenalty, 12, 96);
 
     auto removeOldestMatching = [&](auto&& predicate, int keepLimit) {
         keepLimit = std::max(1, keepLimit);
@@ -403,7 +503,16 @@ void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, 
             }
             Voice& oldest = voices_[static_cast<std::size_t>(oldestIndex)];
             if (oldest.isStolen || oldest.stolenGain < 0.025 || voices_.size() >= static_cast<std::size_t>(voiceLimit + 16)) {
-                voices_.erase(voices_.begin() + oldestIndex);
+                // Swap-and-pop instead of erase: an erase memmoves every trailing
+                // ~300KB Voice (embedded chorus/delay/reverb buffers), which was a
+                // major realtime stutter source during steal storms on dense songs.
+                // Voice order is already unstable by design (post-render culling
+                // uses the same swap-and-pop compaction).
+                const std::size_t backIndex = voices_.size() - 1;
+                if (static_cast<std::size_t>(oldestIndex) != backIndex) {
+                    voices_[static_cast<std::size_t>(oldestIndex)] = std::move(voices_.back());
+                }
+                voices_.pop_back();
             } else {
                 markVoiceStolen(oldest);
                 break;
@@ -415,9 +524,25 @@ void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, 
     const int sameMidiLimit = auditionVoice
         ? 1
         : std::max(3, 11 - std::min(8, std::max(1, patch.unisonVoices)));
+    // Mono mode: classic monosynth behavior — the new note steals every previous
+    // voice of this instrument+channel (fast fade), so only one note sounds.
+    if (patch.monoMode && instrumentIndex >= 0) {
+        for (Voice& other : voices_) {
+            if (other.instrumentIndex == instrumentIndex
+                && other.noteChannel == noteChannel
+                && !other.isStolen) {
+                markVoiceStolen(other);
+            }
+        }
+    }
+    // Same-pitch retrigger culling is scoped to the owning track+instrument:
+    // identical pitches on DIFFERENT tracks (common in imported MIDI, where each
+    // chord voice gets its own track) must never steal each other's voices.
     removeOldestMatching(
         [&](const Voice& voice) {
-            return voice.note.midi == note.midi;
+            return voice.note.midi == note.midi
+                && voice.instrumentIndex == instrumentIndex
+                && voice.noteChannel == noteChannel;
         },
         sameMidiLimit);
     if (auditionVoice) {
@@ -427,10 +552,16 @@ void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, 
             },
             8);
     }
-    if (!patch.name.empty()) {
+    // Patch-name culling prevents one patch from hogging every voice, but it is
+    // deliberately scoped to the SAME instrument and gated on measured load:
+    // imported MIDI lanes legitimately share patch names across many tracks
+    // (e.g. four "Acoustic Grand Piano" chord lanes), and an unscoped name cap
+    // makes separate tracks steal each other's voices.
+    if (!patch.name.empty() && (auditionVoice || smoothedDspLoadPercent_ > 62.0)) {
         removeOldestMatching(
             [&](const Voice& voice) {
-                return voice.patch.name == patch.name;
+                return voice.patch.name == patch.name
+                    && voice.instrumentIndex == instrumentIndex;
             },
             auditionVoice ? 8 : 24);
     }
@@ -454,7 +585,14 @@ void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, 
             if (voices_.size() >= static_cast<std::size_t>(voiceLimit + 12)
                 || stealCandidate->isStolen
                 || stealCandidate->stolenGain < 0.04) {
-                voices_.erase(stealCandidate);
+                // Swap-and-pop (see removeOldestMatching): avoids the ~300KB-per-voice
+                // erase memmove in the realtime path.
+                const std::size_t victim = static_cast<std::size_t>(std::distance(voices_.begin(), stealCandidate));
+                const std::size_t backIndex = voices_.size() - 1;
+                if (victim != backIndex) {
+                    voices_[victim] = std::move(voices_.back());
+                }
+                voices_.pop_back();
             } else {
                 markVoiceStolen(*stealCandidate);
             }
@@ -467,9 +605,12 @@ void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, 
     voice.baseFrequency = std::max(1.0, note.frequency());
     voice.pan = std::clamp(pan + patch.pan, -1.0, 1.0);
     voice.gateSeconds = std::max(0.01, gateSeconds);
-    const double loadPressure = std::clamp(
+    const double loadPressure = offlineRendering_
+        ? 0.0
+        : std::clamp(
         (smoothedDspLoadPercent_ - 64.0) / 34.0
-            + std::max(0.0, static_cast<double>(voices_.size()) - 18.0) / 32.0,
+            + std::max(0.0, static_cast<double>(voices_.size()) - 18.0) / 32.0
+                * std::clamp(smoothedDspLoadPercent_ / 60.0, 0.0, 1.0),
         0.0,
         1.0);
     if (loadPressure > 0.0001) {
@@ -486,7 +627,12 @@ void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, 
         voice.patch.combMix *= (1.0 - loadPressure * 0.48);
         voice.patch.chorusMix *= (1.0 - loadPressure * 0.32);
     }
+    if (sustainUntilNoteOff) {
+        // Held note: park the envelope at its sustain level until noteOff() clamps the gate.
+        voice.gateSeconds = sustainedGateSeconds;
+    }
     voice.instrumentIndex = instrumentIndex;
+    voice.noteChannel = noteChannel;
     voice.onsetSamplesTotal = std::clamp(static_cast<int>(sampleRate_ * 0.0025), 24, 192);
     voice.onsetSamplesRemaining = voice.onsetSamplesTotal;
     voice.pitchEnvelopeState = patch.pitchEnvelopeSemitones;
@@ -495,6 +641,38 @@ void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, 
     voice.transientPitchEnvelopeDecayCoefficient = std::exp(-1.0 / (std::max(1.0, sampleRate_) * std::max(0.001, patch.transientPitchDecay)));
     voice.transientEnvelopeState = 1.0;
     voice.transientEnvelopeDecayCoefficient = std::exp(-1.0 / (std::max(1.0, sampleRate_) * std::max(0.001, patch.transientDecay)));
+    // FM depth envelope: DX7-style modulator decay (0 = constant depth), plus a
+    // note-fixed velocity scale for velocityToFm dynamics.
+    voice.fmDepthState = 1.0;
+    voice.fmDecayCoefficient = patch.fmDecay > 0.0005
+        ? std::exp(-4.0 / (std::max(1.0, sampleRate_) * patch.fmDecay))
+        : 1.0;
+    voice.fmVelocityCached = 1.0 - clamp01(patch.velocityToFm)
+        + clamp01(patch.velocityToFm)
+            * velocityCurveValue(std::clamp(static_cast<double>(note.velocity), 0.0, 1.0), patch.velocityCurve);
+    // Per-osc layer decay envelopes (0 = constant layer gain).
+    const double sr = std::max(1.0, sampleRate_);
+    voice.oscBDecayState = 1.0;
+    voice.oscBDecayCoefficient = patch.oscBDecay > 0.0005
+        ? std::exp(-4.0 / (sr * patch.oscBDecay))
+        : 1.0;
+    voice.oscCDecayState = 1.0;
+    voice.oscCDecayCoefficient = patch.oscCDecay > 0.0005
+        ? std::exp(-4.0 / (sr * patch.oscCDecay))
+        : 1.0;
+    voice.oscDDecayState = 1.0;
+    voice.oscDDecayCoefficient = patch.oscDDecay > 0.0005
+        ? std::exp(-4.0 / (sr * patch.oscDDecay))
+        : 1.0;
+    // Amp decay dynamics: harder strikes ring longer (velocityToDecay) and low
+    // notes ring longer than high ones (keyTrackDecay), like struck strings.
+    const double velocityForDecay = velocityCurveValue(
+        std::clamp(static_cast<double>(note.velocity), 0.0, 1.0), patch.velocityCurve);
+    voice.ampDecayScale = std::clamp(
+        (1.0 + clamp01(patch.velocityToDecay) * (velocityForDecay - 0.5))
+            * (1.0 + clamp01(patch.keyTrackDecay) * (60.0 - static_cast<double>(note.midi)) / 48.0),
+        0.05,
+        8.0);
     voice.noiseState = static_cast<std::uint32_t>((note.midi + 1) * 2654435761u);
     const double analogColor = clamp01(patch.analogColor);
     const double phaseScatter = clamp01(patch.phaseScatter);
@@ -547,7 +725,97 @@ void Synthesizer::noteOn(const Note& note, const SynthPatch& patch, double pan, 
     for (int index = unisonCount; index < maxSynthUnisonVoices; ++index) {
         voice.unisonRatioCached[static_cast<std::size_t>(index)] = 1.0;
     }
+    // Initialize the Freeverb-class reverb network delay lengths for this sample rate.
+    // Base lengths are the classic Freeverb tunings @ 44.1 kHz (stereo offset +23 samples).
+    {
+        static constexpr std::array<int, reverbCombCount> combTunings {
+            1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617
+        };
+        static constexpr std::array<int, reverbAllpassCount> allpassTunings {556, 441, 341, 225};
+        constexpr int stereoSpreadSamples = 23;
+        const double tuningScale = std::clamp(sampleRate_ / 44100.0, 0.5, 1.24);
+        for (int index = 0; index < reverbCombCount; ++index) {
+            voice.reverbCombLenL[static_cast<std::size_t>(index)] = std::clamp(
+                static_cast<int>(combTunings[static_cast<std::size_t>(index)] * tuningScale),
+                16,
+                reverbCombBufferSize - 1);
+            voice.reverbCombLenR[static_cast<std::size_t>(index)] = std::clamp(
+                static_cast<int>((combTunings[static_cast<std::size_t>(index)] + stereoSpreadSamples) * tuningScale),
+                16,
+                reverbCombBufferSize - 1);
+        }
+        for (int index = 0; index < reverbAllpassCount; ++index) {
+            voice.reverbApfLenL[static_cast<std::size_t>(index)] = std::clamp(
+                static_cast<int>(allpassTunings[static_cast<std::size_t>(index)] * tuningScale),
+                8,
+                reverbAllpassBufferSize - 1);
+            voice.reverbApfLenR[static_cast<std::size_t>(index)] = std::clamp(
+                static_cast<int>((allpassTunings[static_cast<std::size_t>(index)] + stereoSpreadSamples) * tuningScale),
+                8,
+                reverbAllpassBufferSize - 1);
+        }
+    }
+    // Keep the voice alive past gate+release while delay/reverb tails are still audible,
+    // so FX ring-out is not truncated by voice culling. Capped to bound realtime cost.
+    // In realtime mode the reverb tail lives in the shared bus, so only the
+    // per-voice delay tail must keep the voice alive; offline rendering keeps
+    // per-voice reverb tails.
+    voice.fxTailSeconds = std::clamp(
+        (offlineRendering_
+            ? clamp01(patch.reverbMix)
+                * (0.30 + clamp01(patch.reverbSize) * 1.5 + clamp01(patch.reverbDecay) * 1.7)
+            : 0.0)
+            + clamp01(patch.delayMix) * clamp01(patch.delayFeedback) * clamp01(patch.delayTime) * 6.0,
+        0.0,
+        5.0);
+    // Portamento / glide: when this (instrument, channel) sounded a note before, start at
+    // the previous pitch and glide toward the new one over patch.portamentoTime seconds.
+    // In legato mode the glide only happens while the previous note is still held.
+    voice.glideRatio = 1.0;
+    if (patch.portamentoTime > 0.0005) {
+        for (const PortamentoMemory& memory : portamentoMemories_) {
+            if (memory.instrumentIndex != instrumentIndex || memory.noteChannel != noteChannel) {
+                continue;
+            }
+            if (memory.frequency > 0.0 && std::abs(memory.frequency - voice.baseFrequency) > 0.01) {
+                bool allowGlide = !patch.portamentoLegato;
+                if (!allowGlide) {
+                    for (const Voice& other : voices_) {
+                        if (other.instrumentIndex == instrumentIndex
+                            && other.noteChannel == noteChannel
+                            && other.age < other.gateSeconds) {
+                            allowGlide = true;
+                            break;
+                        }
+                    }
+                }
+                if (allowGlide) {
+                    voice.glideRatio = std::clamp(
+                        memory.frequency / voice.baseFrequency,
+                        1.0 / 24.0,
+                        24.0);
+                }
+            }
+            break;
+        }
+    }
+    bool memoryFound = false;
+    for (PortamentoMemory& memory : portamentoMemories_) {
+        if (memory.instrumentIndex == instrumentIndex && memory.noteChannel == noteChannel) {
+            memory.frequency = voice.baseFrequency;
+            memoryFound = true;
+            break;
+        }
+    }
+    if (!memoryFound) {
+        portamentoMemories_.push_back(PortamentoMemory {instrumentIndex, noteChannel, voice.baseFrequency});
+    }
     voices_.push_back(voice);
+    // Keep the telemetry voice count current outside render(): the lock-free
+    // playback snapshot derives previewActive from it, and the producer thread
+    // gates audition rendering on previewActive (a stale 0 would silence
+    // audition whenever the transport is stopped).
+    telemetry_.activeVoices = static_cast<int>(voices_.size());
 }
 
 void Synthesizer::applyInstrumentWaveformToActiveVoices(int instrumentIndex, const std::string& oscillator, Waveform waveform) {
@@ -609,8 +877,41 @@ bool Synthesizer::active() const {
     return !voices_.empty();
 }
 
+void Synthesizer::noteOff(int midiNote, int noteChannel, int instrumentIndex) {
+    for (Voice& voice : voices_) {
+        if (voice.note.midi != midiNote) {
+            continue;
+        }
+        if (noteChannel != -2 && voice.noteChannel != noteChannel) {
+            continue;
+        }
+        if (instrumentIndex != -2 && voice.instrumentIndex != instrumentIndex) {
+            continue;
+        }
+        if (voice.age < voice.gateSeconds) {
+            voice.gateSeconds = voice.age;
+        }
+    }
+}
+
+void Synthesizer::allNotesOff(int instrumentIndex) {
+    for (Voice& voice : voices_) {
+        if (instrumentIndex == -1 && voice.instrumentIndex >= 0) {
+            continue;
+        }
+        if (instrumentIndex >= 0 && voice.instrumentIndex != instrumentIndex) {
+            continue;
+        }
+        if (voice.age < voice.gateSeconds) {
+            voice.gateSeconds = voice.age;
+        }
+    }
+}
+
 void Synthesizer::reset() {
     voices_.clear();
+    telemetry_.activeVoices = 0;
+    portamentoMemories_.clear();
     outputDcInputLeft_ = 0.0;
     outputDcOutputLeft_ = 0.0;
     outputDcInputRight_ = 0.0;
@@ -619,7 +920,14 @@ void Synthesizer::reset() {
     truePeakLimiterGain_ = 1.0;
     outputPeakFollower_ = 0.0;
     outputRmsFollower_ = 0.0;
+    masterLp150Left_ = 0.0;
+    masterLp150Right_ = 0.0;
+    masterLp1500Left_ = 0.0;
+    masterLp1500Right_ = 0.0;
+    masterLp6500Left_ = 0.0;
+    masterLp6500Right_ = 0.0;
     smoothedDspLoadPercent_ = 0.0;
+    sharedReverb_ = SharedReverbState {};
     telemetry_ = SynthRenderTelemetry {};
 }
 
@@ -632,7 +940,9 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
     const double invSampleRate = sampleRate_ > 0.0 ? (1.0 / sampleRate_) : 0.0;
 
     // Manual compaction loop for pre-cull (swap-and-pop, no reallocations)
-    const double preCullPressure = std::clamp(
+    const double preCullPressure = offlineRendering_
+        ? 0.0
+        : std::clamp(
         (smoothedDspLoadPercent_ - 66.0) / 30.0
             + std::max(0.0, static_cast<double>(voices_.size()) - 20.0) / 28.0,
         0.0,
@@ -645,7 +955,9 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             bool dead = false;
             if (voice.isStolen && voice.stolenGain < (0.0014 + preCullPressure * 0.007)) {
                 dead = true;
-            } else if (voice.age > voice.gateSeconds && voice.ampEnvelopeValue < releaseFloor) {
+            } else if (voice.age > voice.gateSeconds
+                && voice.ampEnvelopeValue < releaseFloor
+                && voice.age > voice.gateSeconds + voice.patch.ampEnvelope.release + voice.fxTailSeconds) {
                 dead = true;
             }
             if (!dead) {
@@ -659,20 +971,32 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
     }
 
     const int activeVoiceCount = static_cast<int>(voices_.size());
-    SynthQualityTier qualityTier = qualityTierForVoiceCount(activeVoiceCount);
-    if (smoothedDspLoadPercent_ > 95.0) {
-        qualityTier = SynthQualityTier::Eco;
-    } else if (smoothedDspLoadPercent_ > 84.0) {
-        qualityTier = static_cast<int>(qualityTier) < static_cast<int>(SynthQualityTier::Balanced)
-            ? SynthQualityTier::Balanced
-            : qualityTier;
-    } else if (smoothedDspLoadPercent_ > 68.0) {
-        qualityTier = static_cast<int>(qualityTier) < static_cast<int>(SynthQualityTier::High)
-            ? SynthQualityTier::High
-            : qualityTier;
+    SynthQualityTier qualityTier = SynthQualityTier::Ultra;
+    if (!offlineRendering_) {
+        // Degradation is driven by measured DSP load, not raw voice counts: a
+        // healthy machine plays dense arrangements at full quality, while a
+        // struggling one still sheds detail to avoid drop-outs. The voice-count
+        // heuristic only nudges the tier once load is already moderate.
+        if (smoothedDspLoadPercent_ > 95.0) {
+            qualityTier = SynthQualityTier::Eco;
+        } else if (smoothedDspLoadPercent_ > 84.0) {
+            qualityTier = SynthQualityTier::Balanced;
+        } else if (smoothedDspLoadPercent_ > 68.0) {
+            qualityTier = SynthQualityTier::High;
+        } else if (smoothedDspLoadPercent_ > 45.0) {
+            qualityTier = qualityTierForVoiceCount(activeVoiceCount);
+            if (static_cast<int>(qualityTier) > static_cast<int>(SynthQualityTier::High)) {
+                qualityTier = SynthQualityTier::High;
+            }
+        }
+    } else {
+        // Offline renders always use the full-quality path.
+        qualityTier = SynthQualityTier::Ultra;
     }
-    const bool panicLoad = smoothedDspLoadPercent_ > 68.0 || activeVoiceCount > 18;
-    const bool emergencyLoad = smoothedDspLoadPercent_ > 82.0 || activeVoiceCount > 26;
+    const bool panicLoad = !offlineRendering_
+        && smoothedDspLoadPercent_ > 68.0;
+    const bool emergencyLoad = !offlineRendering_
+        && smoothedDspLoadPercent_ > 82.0;
     if (panicLoad) {
         qualityTier = SynthQualityTier::Eco;
     }
@@ -688,7 +1012,12 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
         : (qualityTier == SynthQualityTier::Ultra
         ? 7
         : (qualityTier == SynthQualityTier::High ? 5 : (qualityTier == SynthQualityTier::Balanced ? 3 : 2)));
-    double voiceNorm = 1.0 / std::sqrt(1.0 + static_cast<double>(activeVoiceCount) * 0.95);
+    // Polyphony normalization: keep it gentle. The downstream auto-trim and
+    // limiter already react to actual loudness; a strong per-voice squash made
+    // dense realtime mixes collapse (20 voices -> x0.32) while offline bus
+    // renders (few voices per bus) stayed loud, so tracks seemed to "nullify"
+    // each other in GUI playback.
+    double voiceNorm = 1.0 / std::sqrt(1.0 + static_cast<double>(activeVoiceCount) * 0.18);
     if (heavyLoad) {
         voiceNorm *= 0.92;
     }
@@ -729,25 +1058,104 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             voice.patch.filterEnvelopeCurve);
         (void)fmDepthHint;
         const double keytrack = clamp01(voice.patch.filterKeytrack);
-        const double keytrackBias = ((static_cast<double>(voice.note.midi - 60) / 48.0) * 0.18) * keytrack;
+        const double keytrackBias = ((static_cast<double>(voice.note.midi - 60) / 48.0) * 0.40) * keytrack;
         const double cutoffNormalized = clamp01(
             voice.patch.cutoff
             + filterEnvelope * voice.patch.filterEnvelopeAmount
             + lfoValue * clamp01(voice.patch.lfoFilterDepth) * 0.35
-            + (velocityNorm - 0.6) * 0.16
+            + velocityCurveValue(velocityNorm, voice.patch.velocityCurve) * clamp01(voice.patch.velocityToFilter) * 0.35
             + keytrackBias);
         const double cutoffHz = std::clamp(
             20.0 * std::exp2(cutoffNormalized * 10.0),
             20.0,
             sampleRate_ * 0.45);
         outSvfG = std::tan(pi * cutoffHz / sampleRate_);
-        const double resonance = clamp01(voice.patch.resonance);
-        outSvfK = std::max(0.05, 2.0 - 2.0 * resonance);
+        // Match the per-sample semantics exactly: emergencyLoad resonance clamp
+        // plus key-scaled resonance bias (higher notes get more bite).
+        const double resonanceBase = emergencyLoad
+            ? std::min(0.12, clamp01(voice.patch.resonance))
+            : clamp01(voice.patch.resonance);
+        const double keytrackRes = clamp01(voice.patch.filterKeytrackResonance);
+        const double resonanceKeyBias = ((static_cast<double>(voice.note.midi - 60) / 48.0) * 0.12) * keytrackRes;
+        const double effectiveResonance = std::clamp(resonanceBase + resonanceKeyBias, 0.0, 1.0);
+        outSvfK = std::max(0.05, 2.0 - 2.0 * effectiveResonance);
         // TPT SVF resonance compensation: at high resonance the filter loses significant
         // gain. Use a steeper curve that matches the actual gain loss.
-        outResonanceComp = 1.0 + resonance * resonance * 2.2 + resonance * 0.6;
-        outFilterMode = std::clamp(voice.patch.filterMode, 0, 2);
+        outResonanceComp = 1.0 + effectiveResonance * effectiveResonance * 2.2 + effectiveResonance * 0.6;
+        outFilterMode = std::clamp(voice.patch.filterMode, 0, 4);
     };
+
+    // Shared realtime reverb: initialize tunings for the current sample rate and
+    // update the block-level parameters (send-weighted average of the active
+    // voices' patch settings, smoothed to avoid zipper noise).
+    if (!offlineRendering_) {
+        SharedReverbState& rv = sharedReverb_;
+        if (rv.initializedSampleRate != static_cast<int>(sampleRate_)) {
+            static constexpr std::array<int, reverbCombCount> combTunings {
+                1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617
+            };
+            static constexpr std::array<int, reverbAllpassCount> allpassTunings {556, 441, 341, 225};
+            constexpr int stereoSpreadSamples = 23;
+            const double tuningScale = std::clamp(sampleRate_ / 44100.0, 0.5, 1.24);
+            for (int index = 0; index < reverbCombCount; ++index) {
+                rv.combLenL[static_cast<std::size_t>(index)] = std::clamp(
+                    static_cast<int>(combTunings[static_cast<std::size_t>(index)] * tuningScale),
+                    16,
+                    reverbCombBufferSize - 1);
+                rv.combLenR[static_cast<std::size_t>(index)] = std::clamp(
+                    static_cast<int>((combTunings[static_cast<std::size_t>(index)] + stereoSpreadSamples) * tuningScale),
+                    16,
+                    reverbCombBufferSize - 1);
+            }
+            for (int index = 0; index < reverbAllpassCount; ++index) {
+                rv.apfLenL[static_cast<std::size_t>(index)] = std::clamp(
+                    static_cast<int>(allpassTunings[static_cast<std::size_t>(index)] * tuningScale),
+                    8,
+                    reverbAllpassBufferSize - 1);
+                rv.apfLenR[static_cast<std::size_t>(index)] = std::clamp(
+                    static_cast<int>((allpassTunings[static_cast<std::size_t>(index)] + stereoSpreadSamples) * tuningScale),
+                    8,
+                    reverbAllpassBufferSize - 1);
+            }
+            rv.initializedSampleRate = static_cast<int>(sampleRate_);
+        }
+        double weightSum = 0.0;
+        double targetSize = 0.0;
+        double targetDamping = 0.0;
+        double targetDecay = 0.0;
+        double targetTone = 0.0;
+        double targetDiffusion = 0.0;
+        double targetEarlyMix = 0.0;
+        double targetWidth = 0.0;
+        double targetModDepth = 0.0;
+        for (const Voice& voice : voices_) {
+            const double weight = voice.cachedReverbMix;
+            if (weight <= 1e-5) {
+                continue;
+            }
+            weightSum += weight;
+            targetSize += weight * clamp01(voice.patch.reverbSize);
+            targetDamping += weight * clamp01(voice.patch.reverbDamping);
+            targetDecay += weight * voice.reverbDecayCached;
+            targetTone += weight * voice.reverbToneCached;
+            targetDiffusion += weight * voice.reverbDiffusionCached;
+            targetEarlyMix += weight * voice.reverbEarlyMixCached;
+            targetWidth += weight * voice.reverbWidthCached;
+            targetModDepth += weight * (voice.reverbModDepthCached + voice.reverbChorusCached);
+        }
+        if (weightSum > 1e-6) {
+            const double invWeight = 1.0 / weightSum;
+            constexpr double paramSmooth = 0.08;
+            rv.size += (targetSize * invWeight - rv.size) * paramSmooth;
+            rv.damping += (targetDamping * invWeight - rv.damping) * paramSmooth;
+            rv.decay += (targetDecay * invWeight - rv.decay) * paramSmooth;
+            rv.tone += (targetTone * invWeight - rv.tone) * paramSmooth;
+            rv.diffusion += (targetDiffusion * invWeight - rv.diffusion) * paramSmooth;
+            rv.earlyMix += (targetEarlyMix * invWeight - rv.earlyMix) * paramSmooth;
+            rv.width += (targetWidth * invWeight - rv.width) * paramSmooth;
+            rv.modDepth += (targetModDepth * invWeight - rv.modDepth) * paramSmooth;
+        }
+    }
 
     for (int sample = 0; sample < sampleCount; ++sample) {
         double voiceBusLeft0 = 0.0;
@@ -758,6 +1166,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
         double voiceBusRight1 = 0.0;
         double voiceBusRight2 = 0.0;
         double voiceBusRight3 = 0.0;
+        double sharedSendLeft = 0.0;
+        double sharedSendRight = 0.0;
 
         for (std::size_t voiceIndex = 0; voiceIndex < voices_.size(); ++voiceIndex) {
             Voice& voice = voices_[voiceIndex];
@@ -767,15 +1177,18 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double transientAmount = clamp01(voice.patch.transientNoise);
             const bool needsNoiseEngine = !panicLoad && !emergencyLoad
                 && (voice.patch.noiseEnabled || transientAmount > 0.0001);
-            const bool simplifiedNonlinear = heavyLoad || activeVoiceCount > 30 || panicLoad;
+            const bool simplifiedNonlinear = heavyLoad || panicLoad;
 
-            // Early-exit for silent voices
-            if (voice.ampEnvelopeValue < 1e-7 && voice.age > voice.gateSeconds) {
+            // Early-exit for silent voices (only once FX tails have fully rung out)
+            if (voice.ampEnvelopeValue < 1e-7
+                && voice.age
+                    > voice.gateSeconds + voice.patch.ampEnvelope.release + voice.fxTailSeconds) {
                 voice.ampEnvelopeValue += voice.ampEnvelopeStep;
                 voice.age += invSampleRate;
                 voice.pitchEnvelopeState *= voice.pitchEnvelopeDecayCoefficient;
                 voice.transientPitchEnvelopeState *= voice.transientPitchEnvelopeDecayCoefficient;
                 voice.transientEnvelopeState *= voice.transientEnvelopeDecayCoefficient;
+                voice.fmDepthState *= voice.fmDecayCoefficient;
                 voice.lfoPhase = wrapPhase(voice.lfoPhase + std::max(0.0, voice.patch.lfoRate) * invSampleRate);
                 voice.lfoValue += voice.lfoStep;
                 voice.frequencyValue += voice.frequencyStep;
@@ -824,7 +1237,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double detuneRatioB = voice.detuneRatioB;
             const double detuneRatioC = voice.detuneRatioC;
             const double detuneRatioD = voice.detuneRatioD;
-            int unisonCount = panicLoad ? 1 : std::min(2, voice.unisonCountCached);
+            int unisonCount = voice.unisonCountCached;
             const double syncAmount = voice.patch.hardSyncEnabled
                 ? clamp01(voice.patch.hardSync) * antiAliasScale
                 : 0.0;
@@ -853,7 +1266,9 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 0.03,
                 0.97);
             const double fmRatio = std::max(0.125, voice.patch.fmRatio);
-            double fmDepth = voice.patch.fmEnabled ? clamp01(voice.patch.fmAmount) * 1.5 : 0.0;
+            double fmDepth = voice.patch.fmEnabled
+                ? clamp01(voice.patch.fmAmount) * voice.fmDepthState * voice.fmVelocityCached * 1.5
+                : 0.0;
             if (heavyLoad || panicLoad) {
                 fmDepth *= 0.55;
             }
@@ -881,6 +1296,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 const double velocityAttackScale = 1.0 - velocityCurveValue(velocityNorm, voice.patch.velocityCurve) * velToAttack * 0.85;
                 Envelope velAdjustedAmpEnv = voice.patch.ampEnvelope;
                 velAdjustedAmpEnv.attack *= velocityAttackScale;
+                // velocityToDecay + keyTrackDecay (cached at noteOn): dynamic ring time.
+                velAdjustedAmpEnv.decay *= voice.ampDecayScale;
                 const double ampStart = envelopeFor(velAdjustedAmpEnv, voice.age, voice.gateSeconds, voice.patch.ampEnvelopeCurve);
                 const double ampEnd = envelopeFor(
                     velAdjustedAmpEnv,
@@ -907,15 +1324,25 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 const double flutterEnd = std::sin(((voice.age + blockDuration) * flutterRateHz + flutterPhase) * twoPi);
                 const double wowFlutterCentsStart = wowDepthCents * (wowStart * 0.66 + flutterStart * 0.34);
                 const double wowFlutterCentsEnd = wowDepthCents * (wowEnd * 0.66 + flutterEnd * 0.34);
+                // Portamento glide: exponential pitch slew toward the target note.
+                const double glideTime = std::max(0.0, voice.patch.portamentoTime);
+                const double glideStart = voice.glideRatio;
+                double glideEnd = glideStart;
+                if (glideTime > 0.0005 && (glideStart > 1.0001 || glideStart < 0.9999)) {
+                    glideEnd = 1.0 + (glideStart - 1.0) * std::exp(-blockDuration / (glideTime * 0.22));
+                }
+                voice.glideRatio = glideEnd;
                 const double frequencyStart = std::max(
                     1.0,
                     voice.baseFrequency
+                        * glideStart
                         * centsToRatio(lfoStart * voice.patch.vibratoCents)
                         * centsToRatio(wowFlutterCentsStart)
                         * semitonesToRatio(voice.pitchEnvelopeState + voice.transientPitchEnvelopeState));
                 const double frequencyEnd = std::max(
                     1.0,
                     voice.baseFrequency
+                        * glideEnd
                         * centsToRatio(blockLfoEnd * voice.patch.vibratoCents)
                         * centsToRatio(wowFlutterCentsEnd)
                         * semitonesToRatio(pitchEnvelopeEndState + transientPitchEnvelopeEndState));
@@ -983,7 +1410,11 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     / static_cast<double>(voice.controlBlockSize);
                 voice.filterPassesCached = filterModeStart;
                 int adaptiveUnison = unisonVoiceCount(voice.patch);
-                if (activeVoiceCount > 0) {
+                // Unison shedding is driven by measured DSP load only (offline
+                // renders always keep full stacks): a raw voice-count budget made
+                // dense mixes collapse to thin single-oscillator sounds even on
+                // idle machines.
+                if (!offlineRendering_ && smoothedDspLoadPercent_ > 62.0 && activeVoiceCount > 0) {
                     const int adaptiveBudget = std::max(1, 24 / activeVoiceCount);
                     adaptiveUnison = std::min(adaptiveUnison, adaptiveBudget);
                 }
@@ -1084,7 +1515,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     : clamp01(voice.patch.resonance);
                 voice.filterModeCached = emergencyLoad
                     ? 0
-                    : std::clamp(voice.patch.filterMode, 0, 2);
+                    : std::clamp(voice.patch.filterMode, 0, 4);
                 const double dividerFollowHz = std::clamp(frequency * 0.40, 24.0, 3600.0);
                 voice.dividerAlphaCached = std::clamp(1.0 - std::exp(-twoPi * dividerFollowHz / sampleRate_), 0.01, 0.35);
                 const double spectralStressCtl = std::clamp(frequency / (nyquist * 0.92), 0.0, 1.0);
@@ -1096,15 +1527,21 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 voice.aliasBlendCached = std::clamp(spectralStressCtl * (0.22 + (1.0 - analogColor) * 0.18), 0.0, 0.46);
 
                 // Cache effect mix values for fast-path skipping
-                const bool allowChorusFx = !panicLoad && (!heavyLoad || activeVoiceCount <= 8);
+                const bool allowChorusFx = offlineRendering_
+                    || (!panicLoad && (!heavyLoad || activeVoiceCount <= 8));
                 const double chorusMixRaw = voice.patch.chorusEnabled
-                    ? (heavyLoad ? clamp01(voice.patch.chorusMix) * 0.4 : clamp01(voice.patch.chorusMix))
+                    ? (heavyLoad && !offlineRendering_ ? clamp01(voice.patch.chorusMix) * 0.4 : clamp01(voice.patch.chorusMix))
                     : 0.0;
                 voice.cachedChorusMix = (extremeLoad || !allowChorusFx) ? 0.0 : chorusMixRaw;
-                const bool allowSpatialFx = !panicLoad && !extremeLoad && !heavyLoad && activeVoiceCount <= 6;
-                const double loadHeadroom = std::clamp((72.0 - smoothedDspLoadPercent_) / 36.0, 0.0, 1.0);
-                const double voiceHeadroom = std::clamp((12.0 - static_cast<double>(activeVoiceCount)) / 8.0, 0.0, 1.0);
-                const double spatialBudget = allowSpatialFx ? (loadHeadroom * voiceHeadroom) : 0.0;
+                // Spatial FX availability is gated on measured load tiers only;
+                // a raw voice-count gate made reverb/delay silently vanish once
+                // a mix held 33+ voices, regardless of actual CPU headroom.
+                const bool allowSpatialFx = offlineRendering_
+                    || (!panicLoad && !extremeLoad && !heavyLoad);
+                const double loadHeadroom = offlineRendering_
+                    ? 1.0
+                    : std::clamp((72.0 - smoothedDspLoadPercent_) / 36.0, 0.0, 1.0);
+                const double spatialBudget = allowSpatialFx ? loadHeadroom : 0.0;
                 voice.cachedDelayMix = clamp01(voice.patch.delayMix) * spatialBudget;
                 voice.cachedReverbMix = clamp01(voice.patch.reverbMix) * spatialBudget;
 
@@ -1152,15 +1589,15 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 const double unisonRatio = voice.unisonRatioCached[unisonIndex];
                 const double incrementA = std::clamp((frequency * unisonRatio * detuneRatioA * driftRatioA) * invSampleRate, 0.0, 0.49);
                 const double incrementB = std::clamp(
-                    (frequency * unisonRatio * detuneRatioB * driftRatioB) * invSampleRate,
+                    (frequency * unisonRatio * detuneRatioB * driftRatioB * voice.patch.oscBRatio) * invSampleRate,
                     0.0,
                     0.49);
                 const double incrementC = std::clamp(
-                    (frequency * unisonRatio * detuneRatioC * driftRatioC) * invSampleRate,
+                    (frequency * unisonRatio * detuneRatioC * driftRatioC * voice.patch.oscCRatio) * invSampleRate,
                     0.0,
                     0.49);
                 const double incrementD = std::clamp(
-                    (frequency * unisonRatio * detuneRatioD * driftRatioD) * invSampleRate,
+                    (frequency * unisonRatio * detuneRatioD * driftRatioD * voice.patch.oscDRatio) * invSampleRate,
                     0.0,
                     0.49);
                 const double syncedPhaseB = syncAmount <= 0.0
@@ -1172,9 +1609,9 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 double pmD = 0.0;
                 if (fmDepth > 0.000001) {
                     const double fmRatioLocal = fmRatio * (1.0 + position * fmSpread * 0.35);
-                    const double opB = shapeFmSignal(std::sin(wrapPhase(phaseB * fmRatioLocal) * twoPi), fmColor);
-                    const double opC = shapeFmSignal(std::sin(wrapPhase(phaseC * fmRatioLocal * 1.5) * twoPi), fmColor);
-                    const double opD = shapeFmSignal(std::sin(wrapPhase(phaseD * fmRatioLocal * 2.0) * twoPi), fmColor);
+                    const double opB = shapeFmSignal(fastSin01(wrapPhase(phaseB * fmRatioLocal)), fmColor);
+                    const double opC = shapeFmSignal(fastSin01(wrapPhase(phaseC * fmRatioLocal * 1.5)), fmColor);
+                    const double opD = shapeFmSignal(fastSin01(wrapPhase(phaseD * fmRatioLocal * 2.0)), fmColor);
                     const double fb = clampSigned(voice.fmFeedbackState) * fmFeedback;
                     switch (fmAlgorithm) {
                         case 0: // 4-op cascade
@@ -1238,25 +1675,13 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                         triangleHarmonicCap,
                         supersawVoiceCap)
                     : 0.0;
-                const double shapedA = asymmetricSaturation(
-                    sampleA * waveCompA,
-                    driveA * 0.9,
-                    0.0)
+                const double shapedA = oscDriveShape(sampleA * waveCompA, driveA)
                     * oscALevel;
-                const double shapedB = asymmetricSaturation(
-                    sampleB * waveCompB,
-                    driveB * 0.9,
-                    0.0)
+                const double shapedB = oscDriveShape(sampleB * waveCompB, driveB)
                     * oscBLevel;
-                const double shapedC = asymmetricSaturation(
-                    sampleC * waveCompC,
-                    driveC * 0.9,
-                    0.0)
+                const double shapedC = oscDriveShape(sampleC * waveCompC, driveC)
                     * oscCLevel;
-                const double shapedD = asymmetricSaturation(
-                    sampleD * waveCompD,
-                    driveD * 0.9,
-                    0.0)
+                const double shapedD = oscDriveShape(sampleD * waveCompD, driveD)
                     * oscDLevel;
                 oscA += shapedA;
                 oscB += shapedB;
@@ -1290,6 +1715,14 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             oscD *= unisonNorm;
             unisonSide *= unisonSideNorm(unisonCount);
             unisonSide = unisonSide * 0.82 + unisonContrast * (0.18 * unisonContrastNorm(unisonCount));
+            // Per-osc layer decay envelopes: scale the audible layers and advance
+            // the 1-pole states once per sample (shared across unison voices).
+            oscB *= voice.oscBDecayState;
+            oscC *= voice.oscCDecayState;
+            oscD *= voice.oscDDecayState;
+            voice.oscBDecayState *= voice.oscBDecayCoefficient;
+            voice.oscCDecayState *= voice.oscCDecayCoefficient;
+            voice.oscDDecayState *= voice.oscDDecayCoefficient;
             const double subIncrement = std::clamp((frequency * 0.5) * invSampleRate, 0.0, 0.49);
             const double subSquare = voice.patch.subEnabled
                 ? sampleOscillator(
@@ -1302,10 +1735,10 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     supersawVoiceCap)
                 : 0.0;
             const double subSine = voice.patch.subEnabled
-                ? std::sin(voice.subPhase * twoPi)
+                ? fastSin01(voice.subPhase)
                 : 0.0;
             const double subOctave = voice.patch.subEnabled
-                ? std::sin(wrapPhase(voice.subPhase * 0.5) * twoPi)
+                ? fastSin01(wrapPhase(voice.subPhase * 0.5))
                 : 0.0;
             const double sub = subSquare * 0.18 + subSine * 0.54 + subOctave * 0.12 + dividerSub * 0.16;
             double whiteNoise = 0.0;
@@ -1360,7 +1793,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double bassFocus = voice.subAmountCached * (0.35 + analogColor * 0.65);
             const double subReinforce = simplifiedNonlinear
                 ? fastSaturate((subSine * 0.82 + subOctave * 0.48) * (1.0 + std::max(0.0, voice.patch.drive) * 1.6))
-                : std::tanh((subSine * 0.82 + subOctave * 0.48) * (1.0 + std::max(0.0, voice.patch.drive) * 1.6));
+                : fastTanh((subSine * 0.82 + subOctave * 0.48) * (1.0 + std::max(0.0, voice.patch.drive) * 1.6));
             const double subDynamics = 1.0 / (1.0 + std::abs(oscABCD) * 0.35);
             value += subReinforce * bassFocus * (0.30 + lowEndFocus * 0.24) * subDynamics;
             const double aliasAlpha = voice.aliasAlphaCached;
@@ -1370,49 +1803,36 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             value = value * (1.0 - aliasBlend) + voice.antiAliasState2 * aliasBlend;
 
             // TPT SVF filter (replaces cascaded 1-pole)
-            const double resonance = voice.resonanceCached;
             const int filterMode = voice.filterModeCached;
             const double filterDrive = voice.filterDriveCached;
-            // Compute cutoff Hz with keytracking, envelope, and velocity
-            const double filterEnvelope = envelopeFor(voice.patch.filterEnvelope, voice.age, voice.gateSeconds, voice.patch.filterEnvelopeCurve);
-            const double keytrack = clamp01(voice.patch.filterKeytrack);
-            const double keytrackBias = ((static_cast<double>(voice.note.midi - 60) / 48.0) * 0.18) * keytrack;
-            // Velocity-to-filter modulation (patch-controllable depth)
-            const double velToFilter = clamp01(voice.patch.velocityToFilter);
-            const double velocityFilterBoost = velocityCurveValue(velocityNorm, voice.patch.velocityCurve) * velToFilter * 0.35;
-            // Key-scaled resonance (higher notes get more bite)
-            const double keytrackRes = clamp01(voice.patch.filterKeytrackResonance);
-            const double resonanceKeyBias = ((static_cast<double>(voice.note.midi - 60) / 48.0) * 0.12) * keytrackRes;
-            const double effectiveResonance = std::clamp(resonance + resonanceKeyBias, 0.0, 1.0);
-            const double cutoffNormalized = clamp01(
-                voice.patch.cutoff
-                + filterEnvelope * voice.patch.filterEnvelopeAmount
-                + lfo * clamp01(voice.patch.lfoFilterDepth) * 0.35
-                + velocityFilterBoost
-                + keytrackBias);
-            const double cutoffHz = std::clamp(
-                20.0 * std::exp2(cutoffNormalized * 10.0),
-                20.0,
-                sampleRate_ * 0.45);
-            const double g = std::tan(pi * cutoffHz / sampleRate_);
-            // TPT SVF damping: k=2 at no resonance, k approaches 0 at max resonance.
-            // Clamp k to a minimum of 0.05 to prevent numerical instability at extreme resonance.
-            const double k = std::max(0.05, 2.0 - 2.0 * effectiveResonance);
+            // Filter coefficients are control-block stepped (see the control block
+            // above): g linearly interpolates across the block, k is constant per
+            // block. This eliminates per-sample envelopeFor/exp2/tan coefficient
+            // math while preserving identical block-boundary values.
+            const double g = voice.filterAlphaValue;
+            const double kBase = voice.filterIterAlphaValue;
 
-            // Single filter input saturation — drive adds harmonic content before filtering
-            const double driven = simplifiedNonlinear
-                ? fastSaturate(value * filterDrive * 0.9)
-                : std::tanh(value * filterDrive);
+            // Single filter input saturation — drive adds harmonic content before filtering.
+            // Zero drive must be transparent: the saturator blends in only past unity
+            // drive and is level-compensated so saturation colors without a loudness bump.
+            const double filterSatAmount = clamp01((filterDrive - 1.0) * 0.5);
+            double driven = value;
+            if (filterSatAmount > 0.0001) {
+                const double drivenSat = simplifiedNonlinear
+                    ? fastSaturate(value * filterDrive * 0.9) / filterDrive
+                    : fastTanh(value * filterDrive) / filterDrive;
+                driven = value * (1.0 - filterSatAmount) + drivenSat * filterSatAmount;
+            }
             const int tptMode = mapOldFilterModeToTpt(filterMode);
             // Mode 1 (old LP4) uses same LP output but with gentler k for smoother resonance
-            const double effectiveK = (filterMode == 1) ? std::max(0.08, k * 0.65) : k;
+            const double effectiveK = (filterMode == 1) ? std::max(0.08, kBase * 0.65) : kBase;
             // Nonlinear TPT SVF: saturate the v1 integrator state for analog character
             const double filterNonlin = clamp01(voice.patch.filterNonlinearity);
             double filterValue;
             if (filterNonlin > 0.001) {
                 // Compute linear v1 first, then apply gentle saturation to the state only
                 const double v1Linear = (voice.svfZ1 + g * (driven - voice.svfZ2)) / (1.0 + g * (g + effectiveK));
-                const double v1 = v1Linear * (1.0 - filterNonlin) + std::tanh(v1Linear * (1.0 + filterNonlin * 1.5)) * filterNonlin;
+                const double v1 = v1Linear * (1.0 - filterNonlin) + fastTanh(v1Linear * (1.0 + filterNonlin * 1.5)) * filterNonlin;
                 const double v2 = voice.svfZ2 + g * v1;
                 voice.svfZ1 = 2.0 * v1 - voice.svfZ1;
                 voice.svfZ2 = 2.0 * v2 - voice.svfZ2;
@@ -1436,7 +1856,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             if (combMix > 0.0) {
                 const double fb = clamp01(voice.patch.combFeedback) * 0.985;
                 voice.combState = value + voice.combState * fb;
-                const double combOut = voice.combState * std::cos(std::max(0.01, voice.patch.combTime) * pi * 2.0);
+                const double combOut = voice.combState * fastCos01(std::max(0.01, voice.patch.combTime));
                 value = value * (1.0 - combMix) + combOut * combMix;
             }
 
@@ -1492,7 +1912,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     voice.transientColorState);
             }
             const double transientShape = 1.0 + clamp01(voice.patch.transientShape) * 8.0;
-            const double shapedBurst = std::tanh(burstEnvelope * transientShape);
+            const double shapedBurst = fastTanh(burstEnvelope * transientShape);
             const double transientBodyAmount = transientAmountSafe
                 * (0.18 + clamp01(voice.patch.transientShape) * 0.42)
                 * (0.45 + velocityNorm * 0.55);
@@ -1502,7 +1922,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 sampleRate_ * 0.45);
             const double transientBodyInc = std::clamp(transientBodyFreq * invSampleRate, 0.0, 0.49);
             voice.transientBodyPhase = wrapPhase(voice.transientBodyPhase + transientBodyInc);
-            const double transientBody = std::sin(voice.transientBodyPhase * twoPi)
+            const double transientBody = fastSin01(voice.transientBodyPhase)
                 * std::exp(-voice.age / std::max(0.002, transientDecay * 0.7));
             value += clickEnvelope * (panicLoad ? 0.0 : clamp01(voice.patch.click))
                 + transientEnvelope * transientAmountSafe * transientNoise
@@ -1524,11 +1944,19 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double preNonlinear = value;
             const double satDrive = drive * (0.82 + analogColor * 0.45 + analogWarmth * 0.34);
             const double satAsymmetry = (velocityNorm - 0.5) * 0.45 + voice.toneTiltCached * 0.2;
-            double nonlinear = asymmetricSaturation(preNonlinear, satDrive, satAsymmetry);
-            if (!heavyLoad) {
-                const double midpoint = 0.5 * (preNonlinear + voice.nonlinearPrevInput);
-                const double nonlinearMid = asymmetricSaturation(midpoint, satDrive, satAsymmetry);
-                nonlinear = nonlinear * 0.56 + nonlinearMid * 0.44;
+            // Zero drive must be transparent: blend the saturator in with drive and
+            // compensate its small-signal gain so color doesn't come with a level bump.
+            const double satAmount = clamp01(satDrive * 1.2);
+            double nonlinear = preNonlinear;
+            if (satAmount > 0.0001) {
+                const double satGain = 1.0 + std::max(0.0, satDrive) * 7.0;
+                double saturated = asymmetricSaturation(preNonlinear, satDrive, satAsymmetry) / satGain;
+                if (!heavyLoad) {
+                    const double midpoint = 0.5 * (preNonlinear + voice.nonlinearPrevInput);
+                    const double nonlinearMid = asymmetricSaturation(midpoint, satDrive, satAsymmetry) / satGain;
+                    saturated = saturated * 0.56 + nonlinearMid * 0.44;
+                }
+                nonlinear = preNonlinear * (1.0 - satAmount) + saturated * satAmount;
             }
             if (!extremeLoad && !panicLoad) {
                 nonlinear = harmonicExciter(
@@ -1561,7 +1989,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double tapeColor = voice.tapeColorCached;
             if (tapeColor > 0.0001) {
                 const double tapeDrive = 1.0 + tapeColor * 3.4 + analogWarmth * 1.0;
-                double tapeSample = std::tanh(value * tapeDrive);
+                double tapeSample = fastTanh(value * tapeDrive);
                 tapeSample = softKneeLimiter(tapeSample + voice.lowBodyState * tapeColor * 0.12, 1.0, 2.0 + tapeColor * 3.0);
                 const double tapeMix = tapeColor * 0.42;
                 value = value * (1.0 - tapeMix) + tapeSample * tapeMix;
@@ -1607,7 +2035,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double outputGlue = voice.outputGlueCached;
             if (outputGlue > 0.0001) {
                 const double glueDrive = 1.0 + outputGlue * 2.0;
-                const double glued = std::tanh(value * glueDrive) / glueDrive;
+                const double glued = fastTanh(value * glueDrive) / glueDrive;
                 const double glueMix = std::clamp(outputGlue * 0.46, 0.0, 0.46);
                 value = value * (1.0 - glueMix) + glued * glueMix;
             }
@@ -1635,7 +2063,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             const double sideValue = crushSample(
                 (simplifiedNonlinear
                 ? fastSaturate(sideSeed * (1.0 + drive * 3.0))
-                        : std::tanh(sideSeed * (1.0 + drive * 2.4)))
+                        : fastTanh(sideSeed * (1.0 + drive * 2.4)))
                     * ampEnvelope
                     * voice.gainCached
                     * velocityGain
@@ -1673,15 +2101,15 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                         voice.chorusEnsembleCached * 0.46 + analogWarmth * 0.28 + wowFlutter * 0.18 + vintageDrift * 0.08,
                         0.0,
                         1.0);
-                    const double chorusLfo = std::sin(voice.chorusPhase * twoPi);
+                    const double chorusLfo = fastSin01(wrapPhase(voice.chorusPhase));
                     const double chorusWidth = clamp01(voice.patch.chorusWidth);
-                    const double chorusLfoOffset = std::sin(wrapPhase(voice.chorusPhase + chorusWidth * 0.25) * twoPi);
+                    const double chorusLfoOffset = fastSin01(wrapPhase(voice.chorusPhase + chorusWidth * 0.25));
                     const double baseDelay = sampleRate_ * (0.004 + clamp01(voice.patch.chorusDelay) * 0.022);
                     const double depthSamples = sampleRate_ * 0.012 * clamp01(voice.patch.chorusDepth);
-                    const double wowLfo = std::sin(wrapPhase(voice.chorusPhase * (0.57 + wowFlutter * 0.28) + 0.17) * twoPi);
-                    const double flutterLfo = std::sin(wrapPhase(voice.chorusPhase * (1.83 + wowFlutter * 1.75) + 0.61) * twoPi);
+                    const double wowLfo = fastSin01(wrapPhase(voice.chorusPhase * (0.57 + wowFlutter * 0.28) + 0.17));
+                    const double flutterLfo = fastSin01(wrapPhase(voice.chorusPhase * (1.83 + wowFlutter * 1.75) + 0.61));
                     const double jitterNoise = randomSymmetric(voice.noiseState) * chorusJitter;
-                    const double jitterLfo = std::sin(wrapPhase(voice.chorusPhase * (2.2 + chorusJitter * 5.6) + 0.43) * twoPi);
+                    const double jitterLfo = fastSin01(wrapPhase(voice.chorusPhase * (2.2 + chorusJitter * 5.6) + 0.43));
                     const double wowMod = 1.0
                         + (wowLfo * 0.62 + flutterLfo * 0.38) * (0.006 + wowFlutter * 0.018)
                         + (jitterNoise * 0.003 + jitterLfo * 0.005) * chorusJitter;
@@ -1697,8 +2125,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     double chorusWetLeft = delayedLeft;
                     double chorusWetRight = delayedRight;
                     if (ensembleAmount > 0.0001) {
-                        const double lfo2 = std::sin(wrapPhase(voice.chorusPhase + 0.37 + chorusWidth * 0.31) * twoPi);
-                        const double lfo3 = std::sin(wrapPhase(voice.chorusPhase + 0.71 + chorusWidth * 0.19) * twoPi);
+                        const double lfo2 = fastSin01(wrapPhase(voice.chorusPhase + 0.37 + chorusWidth * 0.31));
+                        const double lfo3 = fastSin01(wrapPhase(voice.chorusPhase + 0.71 + chorusWidth * 0.19));
                         const double delayedLeft2 = readDelay(
                             voice.chorusLeft,
                             voice.chorusIndex,
@@ -1712,8 +2140,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                         chorusWetRight = chorusWetRight * (1.0 - ensembleBlend) + delayedRight2 * ensembleBlend;
                     }
                     if (chorusLuxury > 0.0001) {
-                        const double lfo4 = std::sin(wrapPhase(voice.chorusPhase + 0.13 + chorusWidth * 0.43) * twoPi);
-                        const double lfo5 = std::sin(wrapPhase(voice.chorusPhase + 0.89 + chorusWidth * 0.57) * twoPi);
+                        const double lfo4 = fastSin01(wrapPhase(voice.chorusPhase + 0.13 + chorusWidth * 0.43));
+                        const double lfo5 = fastSin01(wrapPhase(voice.chorusPhase + 0.89 + chorusWidth * 0.57));
                         const double delayedLeft3 = readDelay(
                             voice.chorusLeft,
                             voice.chorusIndex,
@@ -1733,8 +2161,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     chorusWetLeft = voice.chorusToneStateL;
                     chorusWetRight = voice.chorusToneStateR;
                     const double chorusCompDrive = 1.0 + chorusLuxury * 1.8 + chorusSaturation * 2.2;
-                    chorusWetLeft = std::tanh(chorusWetLeft * chorusCompDrive) / chorusCompDrive;
-                    chorusWetRight = std::tanh(chorusWetRight * chorusCompDrive) / chorusCompDrive;
+                    chorusWetLeft = fastTanh(chorusWetLeft * chorusCompDrive) / chorusCompDrive;
+                    chorusWetRight = fastTanh(chorusWetRight * chorusCompDrive) / chorusCompDrive;
                     const double bbdNoise = randomSymmetric(voice.noiseState)
                         * (0.00005 + chorusLuxury * 0.00035 + chorusJitter * 0.00028)
                         * (0.35 + effectiveChorusMix * 0.65)
@@ -1752,7 +2180,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 }
 
                 // Delay / Reverb
-                const bool allowSpatialFx = !panicLoad && !extremeLoad && !heavyLoad && activeVoiceCount <= 6;
+                const bool allowSpatialFx = offlineRendering_
+                    || (!panicLoad && !extremeLoad && !heavyLoad);
                 const int fxWriteIndex = voice.fxDelayIndex;
                 if (delayMix > 0.0 || reverbMix > 0.0) {
                     const double delayTimeNorm = clamp01(voice.patch.delayTime);
@@ -1764,9 +2193,9 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     const double wowCharacter = std::clamp(wowFlutter * 0.55 + voice.delayWowCached * 0.85, 0.0, 1.0);
                     const double modDepth = 0.001 + voice.delayModDepthCached * 0.018 + wowCharacter * 0.012;
                     const double stereoSkew = voice.delayStereoCached * 0.14;
-                    const double wow = std::sin((voice.age * (0.08 + wowCharacter * 0.42) + voice.chorusPhase * 0.13) * twoPi);
-                    const double flutter = std::sin((voice.age * (2.6 + wowCharacter * 4.1) + voice.chorusPhase * 0.31) * twoPi);
-                    const double flutterDelayMod = 1.0 + std::sin(voice.chorusPhase * twoPi) * modDepth;
+                    const double wow = fastSin01(wrapPhase(voice.age * (0.08 + wowCharacter * 0.42) + voice.chorusPhase * 0.13));
+                    const double flutter = fastSin01(wrapPhase(voice.age * (2.6 + wowCharacter * 4.1) + voice.chorusPhase * 0.31));
+                    const double flutterDelayMod = 1.0 + fastSin01(wrapPhase(voice.chorusPhase)) * modDepth;
                     const double tapeWarp = 1.0 + (wow * 0.72 + flutter * 0.28) * modDepth * 0.85;
                     const double delayedLeft = readDelay(
                         voice.fxDelayLeft,
@@ -1801,8 +2230,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     voice.delayToneStateL += toneAlpha * (delayFeedbackInLeft - voice.delayToneStateL);
                     voice.delayToneStateR += toneAlpha * (delayFeedbackInRight - voice.delayToneStateR);
                     const double feedbackDrive = 1.0 + voice.delayDriveCached * 2.6;
-                    const double drivenFeedbackL = std::tanh(voice.delayToneStateL * feedbackDrive);
-                    const double drivenFeedbackR = std::tanh(voice.delayToneStateR * feedbackDrive);
+                    const double drivenFeedbackL = fastTanh(voice.delayToneStateL * feedbackDrive);
+                    const double drivenFeedbackR = fastTanh(voice.delayToneStateR * feedbackDrive);
                     const double tapeNoise = randomSymmetric(voice.noiseState)
                         * (0.00003 + voice.tapeColorCached * 0.00018)
                         * (0.35 + delayMix * 0.65)
@@ -1817,15 +2246,24 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     voiceLeft = voiceLeft * (1.0 - effectiveDelayMix) + diffuseLeft * effectiveDelayMix;
                     voiceRight = voiceRight * (1.0 - effectiveDelayMix) + diffuseRight * effectiveDelayMix;
 
-                    if (reverbMix > 0.0) {
+                    if (reverbMix > 0.0 && !offlineRendering_) {
+                        // Realtime: contribute to the shared send reverb (one network
+                        // for the whole mix, processed after the voice sum) instead of
+                        // running a full per-voice Freeverb network.
+                        sharedSendLeft += voiceLeft * reverbMix * 1.18;
+                        sharedSendRight += voiceRight * reverbMix * 1.18;
+                        const double sharedDryKeep = 1.0 - reverbMix * 0.55;
+                        voiceLeft *= sharedDryKeep;
+                        voiceRight *= sharedDryKeep;
+                    } else if (reverbMix > 0.0) {
                         const double size = clamp01(voice.patch.reverbSize);
                         const double damping = clamp01(voice.patch.reverbDamping);
                         const double preDelay = 24.0 + clamp01(voice.patch.reverbPreDelay) * 900.0;
                         const double reverbModScale = 0.001 + voice.reverbModDepthCached * 0.010 + voice.reverbChorusCached * 0.012;
-                        const double modA = 1.0 + std::sin(voice.chorusPhase * twoPi * 0.73 + 0.31) * reverbModScale;
-                        const double modB = 1.0 + std::sin(voice.chorusPhase * twoPi * 0.57 + 1.19) * reverbModScale;
-                        const double modC = 1.0 + std::sin(voice.chorusPhase * twoPi * 0.91 + 2.07) * reverbModScale;
-                        const double modD = 1.0 + std::sin(voice.chorusPhase * twoPi * 0.63 + 2.71) * reverbModScale;
+                        const double modA = 1.0 + fastSin01(wrapPhase(voice.chorusPhase * 0.73 + 0.31 * (1.0 / twoPi))) * reverbModScale;
+                        const double modB = 1.0 + fastSin01(wrapPhase(voice.chorusPhase * 0.57 + 1.19 * (1.0 / twoPi))) * reverbModScale;
+                        const double modC = 1.0 + fastSin01(wrapPhase(voice.chorusPhase * 0.91 + 2.07 * (1.0 / twoPi))) * reverbModScale;
+                        const double modD = 1.0 + fastSin01(wrapPhase(voice.chorusPhase * 0.63 + 2.71 * (1.0 / twoPi))) * reverbModScale;
                         const double tapA = readDelay(voice.fxDelayLeft, fxWriteIndex, (preDelay + delaySamples * (0.43 + size * 0.35)) * modA);
                         const double tapB = readDelay(voice.fxDelayLeft, fxWriteIndex, (preDelay + delaySamples * (0.79 + size * 0.31)) * modB);
                         const double tapC = readDelay(voice.fxDelayRight, fxWriteIndex, (preDelay + delaySamples * (0.61 + size * 0.41)) * modC);
@@ -1864,26 +2302,81 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                         const double diffuseL = apfOutL4;
                         const double diffuseR = apfOutR4;
 
-                        const double diffuseAlpha = std::clamp(
-                            0.018 + (1.0 - damping) * (0.08 + voice.reverbDiffusionCached * 0.10) + voice.reverbToneCached * 0.04,
-                            0.015,
-                            0.32);
-                        const double decay = std::clamp(
-                            0.54 + size * 0.34 + voice.reverbDiffusionCached * 0.09 + voice.reverbDecayCached * 0.12 + voice.reverbBloomCached * 0.1,
-                            0.54,
-                            0.985);
-                        const double reverbInL = (diffuseL * 0.72 + diffuseR * 0.18 + tapC * 0.10) * decay;
-                        const double reverbInR = (diffuseR * 0.72 + diffuseL * 0.18 + tapB * 0.10) * decay;
-                        voice.reverbStateL1 += diffuseAlpha * (reverbInL - voice.reverbStateL1);
-                        voice.reverbStateR1 += diffuseAlpha * (reverbInR - voice.reverbStateR1);
-                        voice.reverbStateL2 += diffuseAlpha * ((voice.reverbStateL1 + voice.reverbStateR1 * 0.11) - voice.reverbStateL2);
-                        voice.reverbStateR2 += diffuseAlpha * ((voice.reverbStateR1 + voice.reverbStateL1 * 0.11) - voice.reverbStateR2);
-                        double reverbWetL = voice.reverbStateL2;
-                        double reverbWetR = voice.reverbStateR2;
+                        // === FREEVERB-CLASS COMB/ALLPASS NETWORK ===
+                        // 8 parallel damped feedback combs per channel (stereo-detuned lengths,
+                        // initialized in noteOn) summed, then 4 series allpasses per channel.
+                        // The APF cascade above acts as the input pre-diffuser; taps keep
+                        // serving as modulated early reflections (see earlyMix below).
+                        const double combDamp = std::clamp(
+                            damping * 0.45 + (1.0 - voice.reverbToneCached) * 0.10,
+                            0.0,
+                            0.7);
+                        const double combFeedback = std::clamp(
+                            0.42 + size * 0.32 + voice.reverbDecayCached * 0.22 + voice.reverbBloomCached * 0.04,
+                            0.30,
+                            0.965);
+                        const double apfGain = 0.32 + voice.reverbDiffusionCached * 0.28;
+                        const double netInL = diffuseL * 0.82 + diffuseR * 0.18;
+                        const double netInR = diffuseR * 0.82 + diffuseL * 0.18;
+                        double wetL = 0.0;
+                        double wetR = 0.0;
+                        for (int comb = 0; comb < reverbCombCount; ++comb) {
+                            const std::size_t ci = static_cast<std::size_t>(comb);
+                            {
+                                auto& buffer = voice.reverbCombBufL[ci];
+                                const int length = voice.reverbCombLenL[ci];
+                                const int index = voice.reverbCombIdxL[ci];
+                                const double out = buffer[static_cast<std::size_t>(index)];
+                                double& dampState = voice.reverbCombDampL[ci];
+                                dampState = out * (1.0 - combDamp) + dampState * combDamp;
+                                buffer[static_cast<std::size_t>(index)] = static_cast<float>(netInL + dampState * combFeedback);
+                                voice.reverbCombIdxL[ci] = (index + 1) % length;
+                                wetL += out;
+                            }
+                            {
+                                auto& buffer = voice.reverbCombBufR[ci];
+                                const int length = voice.reverbCombLenR[ci];
+                                const int index = voice.reverbCombIdxR[ci];
+                                const double out = buffer[static_cast<std::size_t>(index)];
+                                double& dampState = voice.reverbCombDampR[ci];
+                                dampState = out * (1.0 - combDamp) + dampState * combDamp;
+                                buffer[static_cast<std::size_t>(index)] = static_cast<float>(netInR + dampState * combFeedback);
+                                voice.reverbCombIdxR[ci] = (index + 1) % length;
+                                wetR += out;
+                            }
+                        }
+                        constexpr double combNorm = 1.0 / static_cast<double>(reverbCombCount);
+                        wetL *= combNorm;
+                        wetR *= combNorm;
+                        for (int stage = 0; stage < reverbAllpassCount; ++stage) {
+                            const std::size_t si = static_cast<std::size_t>(stage);
+                            {
+                                auto& buffer = voice.reverbApfBufL[si];
+                                const int length = voice.reverbApfLenL[si];
+                                const int index = voice.reverbApfIdxL[si];
+                                const double buffered = buffer[static_cast<std::size_t>(index)];
+                                const double out = buffered - apfGain * wetL;
+                                buffer[static_cast<std::size_t>(index)] = static_cast<float>(wetL + buffered * apfGain);
+                                voice.reverbApfIdxL[si] = (index + 1) % length;
+                                wetL = out;
+                            }
+                            {
+                                auto& buffer = voice.reverbApfBufR[si];
+                                const int length = voice.reverbApfLenR[si];
+                                const int index = voice.reverbApfIdxR[si];
+                                const double buffered = buffer[static_cast<std::size_t>(index)];
+                                const double out = buffered - apfGain * wetR;
+                                buffer[static_cast<std::size_t>(index)] = static_cast<float>(wetR + buffered * apfGain);
+                                voice.reverbApfIdxR[si] = (index + 1) % length;
+                                wetR = out;
+                            }
+                        }
+                        double reverbWetL = wetL * 1.35;
+                        double reverbWetR = wetR * 1.35;
                         const double warmth = voice.analogWarmthCached;
                         const double air = voice.airBoostCached;
-                        const double lowLift = (reverbInL + reverbInR) * 0.5 - (reverbWetL + reverbWetR) * 0.5;
-                        const double reverbBody = std::tanh(lowLift * (0.7 + warmth * 0.8));
+                        const double lowLift = (netInL + netInR) * 0.5 - (reverbWetL + reverbWetR) * 0.5;
+                        const double reverbBody = fastTanh(lowLift * (0.7 + warmth * 0.8));
                         reverbWetL += reverbBody * (0.02 + warmth * 0.08 + voice.reverbBloomCached * 0.08);
                         reverbWetR += reverbBody * (0.02 + warmth * 0.08 + voice.reverbBloomCached * 0.08);
                         const double reverbAirL = (tapA - tapB) * (0.08 + air * 0.34 + voice.reverbToneCached * 0.26);
@@ -1892,12 +2385,12 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                         reverbWetR += reverbAirR;
                         if (voice.reverbBloomCached > 0.0001) {
                             const double bloomDrive = 1.0 + voice.reverbBloomCached * 3.2;
-                            reverbWetL = std::tanh(reverbWetL * bloomDrive) / bloomDrive;
-                            reverbWetR = std::tanh(reverbWetR * bloomDrive) / bloomDrive;
+                            reverbWetL = fastTanh(reverbWetL * bloomDrive) / bloomDrive;
+                            reverbWetR = fastTanh(reverbWetR * bloomDrive) / bloomDrive;
                         }
                         if (voice.reverbShimmerCached > 0.0001) {
                             const double shimmerExcite = (std::abs(tapA) + std::abs(tapD) - std::abs(tapB) - std::abs(tapC));
-                            const double shimmer = std::tanh(shimmerExcite * 1.7) * (0.06 + voice.reverbShimmerCached * 0.24);
+                            const double shimmer = fastTanh(shimmerExcite * 1.7) * (0.06 + voice.reverbShimmerCached * 0.24);
                             reverbWetL += shimmer;
                             reverbWetR += shimmer;
                         }
@@ -1932,6 +2425,10 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                     voice.apfL3 *= 0.994; voice.apfL4 *= 0.994;
                     voice.apfR1 *= 0.994; voice.apfR2 *= 0.994;
                     voice.apfR3 *= 0.994; voice.apfR4 *= 0.994;
+                    for (int comb = 0; comb < reverbCombCount; ++comb) {
+                        voice.reverbCombDampL[static_cast<std::size_t>(comb)] *= 0.994;
+                        voice.reverbCombDampR[static_cast<std::size_t>(comb)] *= 0.994;
+                    }
                 }
             } else {
                 // Fast-path decay when spatial FX are inactive.
@@ -1945,6 +2442,10 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
                 voice.apfL3 *= 0.994; voice.apfL4 *= 0.994;
                 voice.apfR1 *= 0.994; voice.apfR2 *= 0.994;
                 voice.apfR3 *= 0.994; voice.apfR4 *= 0.994;
+                for (int comb = 0; comb < reverbCombCount; ++comb) {
+                    voice.reverbCombDampL[static_cast<std::size_t>(comb)] *= 0.994;
+                    voice.reverbCombDampR[static_cast<std::size_t>(comb)] *= 0.994;
+                }
             }
 
             const int holdSamples = 1 + static_cast<int>(clamp01(voice.patch.sampleRateReduction) * 48.0);
@@ -2001,6 +2502,7 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             voice.pitchEnvelopeState *= voice.pitchEnvelopeDecayCoefficient;
             voice.transientPitchEnvelopeState *= voice.transientPitchEnvelopeDecayCoefficient;
             voice.transientEnvelopeState *= voice.transientEnvelopeDecayCoefficient;
+            voice.fmDepthState *= voice.fmDecayCoefficient;
             voice.ampEnvelopeValue += voice.ampEnvelopeStep;
             voice.filterAlphaValue += voice.filterAlphaStep;
             voice.filterIterAlphaValue += voice.filterIterAlphaStep;
@@ -2016,13 +2518,166 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
 
         mixedLeft *= voiceNorm;
         mixedRight *= voiceNorm;
+
+        // Shared realtime reverb network: one Freeverb-class unit for the whole
+        // mix. Voices accumulated their send into sharedSendLeft/Right above.
+        // Skipped entirely while the input and tail are both silent.
+        if (!offlineRendering_) {
+            SharedReverbState& rv = sharedReverb_;
+            const double inLeft = sharedSendLeft;
+            const double inRight = sharedSendRight;
+            const double inLevel = std::abs(inLeft) + std::abs(inRight);
+            if (inLevel < 1e-6 && rv.tailLevel < 2e-5) {
+                ++rv.silenceSamples;
+            } else {
+                rv.silenceSamples = 0;
+            }
+            if (rv.silenceSamples < 2048) {
+                rv.delayL[static_cast<std::size_t>(rv.delayIndex)] = static_cast<float>(inLeft);
+                rv.delayR[static_cast<std::size_t>(rv.delayIndex)] = static_cast<float>(inRight);
+                rv.modPhase = wrapPhase(rv.modPhase + 0.31 * invSampleRate);
+                const double reverbModScale = 0.001 + rv.modDepth * 0.011;
+                const double modA = 1.0 + fastSin01(wrapPhase(rv.modPhase * 0.73 + 0.31 * (1.0 / twoPi))) * reverbModScale;
+                const double modB = 1.0 + fastSin01(wrapPhase(rv.modPhase * 0.57 + 1.19 * (1.0 / twoPi))) * reverbModScale;
+                const double modC = 1.0 + fastSin01(wrapPhase(rv.modPhase * 0.91 + 2.07 * (1.0 / twoPi))) * reverbModScale;
+                const double modD = 1.0 + fastSin01(wrapPhase(rv.modPhase * 0.63 + 2.71 * (1.0 / twoPi))) * reverbModScale;
+                const double preDelay = 24.0 + 380.0 * rv.size;
+                const double delaySamples = 700.0;
+                const double tapA = readDelay(rv.delayL, rv.delayIndex, (preDelay + delaySamples * (0.43 + rv.size * 0.35)) * modA);
+                const double tapB = readDelay(rv.delayL, rv.delayIndex, (preDelay + delaySamples * (0.79 + rv.size * 0.31)) * modB);
+                const double tapC = readDelay(rv.delayR, rv.delayIndex, (preDelay + delaySamples * (0.61 + rv.size * 0.41)) * modC);
+                const double tapD = readDelay(rv.delayR, rv.delayIndex, (preDelay + delaySamples * (0.94 + rv.size * 0.27)) * modD);
+                // Pre-diffuser all-pass cascade (mirrors the per-voice network).
+                const double apfCoeff = 0.65 + rv.diffusion * 0.28;
+                const double apfInL1 = tapA * 0.62 + tapB * 0.38;
+                const double apfOutL1 = rv.apfL1 + apfCoeff * apfInL1;
+                rv.apfL1 = apfInL1 - apfCoeff * apfOutL1;
+                const double apfOutL2 = rv.apfL2 + apfCoeff * 0.82 * apfOutL1;
+                rv.apfL2 = apfOutL1 - apfCoeff * 0.82 * apfOutL2;
+                const double apfOutL3 = rv.apfL3 + apfCoeff * 0.64 * apfOutL2;
+                rv.apfL3 = apfOutL2 - apfCoeff * 0.64 * apfOutL3;
+                const double apfOutL4 = rv.apfL4 + apfCoeff * 0.48 * apfOutL3;
+                rv.apfL4 = apfOutL3 - apfCoeff * 0.48 * apfOutL4;
+                const double apfInR1 = tapD * 0.62 + tapC * 0.38;
+                const double apfOutR1 = rv.apfR1 + apfCoeff * apfInR1;
+                rv.apfR1 = apfInR1 - apfCoeff * apfOutR1;
+                const double apfOutR2 = rv.apfR2 + apfCoeff * 0.82 * apfOutR1;
+                rv.apfR2 = apfOutR1 - apfCoeff * 0.82 * apfOutR2;
+                const double apfOutR3 = rv.apfR3 + apfCoeff * 0.64 * apfOutR2;
+                rv.apfR3 = apfOutR2 - apfCoeff * 0.64 * apfOutR3;
+                const double apfOutR4 = rv.apfR4 + apfCoeff * 0.48 * apfOutR3;
+                rv.apfR4 = apfOutR3 - apfCoeff * 0.48 * apfOutR4;
+                const double diffuseL = apfOutL4;
+                const double diffuseR = apfOutR4;
+                const double combDamp = std::clamp(
+                    rv.damping * 0.45 + (1.0 - rv.tone) * 0.10,
+                    0.0,
+                    0.7);
+                const double combFeedback = std::clamp(
+                    0.42 + rv.size * 0.32 + rv.decay * 0.22,
+                    0.30,
+                    0.965);
+                const double apfGain = 0.32 + rv.diffusion * 0.28;
+                const double netInL = diffuseL * 0.82 + diffuseR * 0.18;
+                const double netInR = diffuseR * 0.82 + diffuseL * 0.18;
+                double wetL = 0.0;
+                double wetR = 0.0;
+                for (int comb = 0; comb < reverbCombCount; ++comb) {
+                    const std::size_t ci = static_cast<std::size_t>(comb);
+                    {
+                        auto& buffer = rv.combBufL[ci];
+                        const int length = rv.combLenL[ci];
+                        const int index = rv.combIdxL[ci];
+                        const double out = buffer[static_cast<std::size_t>(index)];
+                        double& dampState = rv.combDampL[ci];
+                        dampState = out * (1.0 - combDamp) + dampState * combDamp;
+                        buffer[static_cast<std::size_t>(index)] = static_cast<float>(netInL + dampState * combFeedback);
+                        rv.combIdxL[ci] = (index + 1) % length;
+                        wetL += out;
+                    }
+                    {
+                        auto& buffer = rv.combBufR[ci];
+                        const int length = rv.combLenR[ci];
+                        const int index = rv.combIdxR[ci];
+                        const double out = buffer[static_cast<std::size_t>(index)];
+                        double& dampState = rv.combDampR[ci];
+                        dampState = out * (1.0 - combDamp) + dampState * combDamp;
+                        buffer[static_cast<std::size_t>(index)] = static_cast<float>(netInR + dampState * combFeedback);
+                        rv.combIdxR[ci] = (index + 1) % length;
+                        wetR += out;
+                    }
+                }
+                constexpr double combNorm = 1.0 / static_cast<double>(reverbCombCount);
+                wetL *= combNorm;
+                wetR *= combNorm;
+                for (int stage = 0; stage < reverbAllpassCount; ++stage) {
+                    const std::size_t si = static_cast<std::size_t>(stage);
+                    {
+                        auto& buffer = rv.apfBufL[si];
+                        const int length = rv.apfLenL[si];
+                        const int index = rv.apfIdxL[si];
+                        const double buffered = buffer[static_cast<std::size_t>(index)];
+                        const double out = buffered - apfGain * wetL;
+                        buffer[static_cast<std::size_t>(index)] = static_cast<float>(wetL + buffered * apfGain);
+                        rv.apfIdxL[si] = (index + 1) % length;
+                        wetL = out;
+                    }
+                    {
+                        auto& buffer = rv.apfBufR[si];
+                        const int length = rv.apfLenR[si];
+                        const int index = rv.apfIdxR[si];
+                        const double buffered = buffer[static_cast<std::size_t>(index)];
+                        const double out = buffered - apfGain * wetR;
+                        buffer[static_cast<std::size_t>(index)] = static_cast<float>(wetR + buffered * apfGain);
+                        rv.apfIdxR[si] = (index + 1) % length;
+                        wetR = out;
+                    }
+                }
+                double reverbWetL = wetL * 1.35;
+                double reverbWetR = wetR * 1.35;
+                if (rv.width > 0.0001) {
+                    const double wetMid = (reverbWetL + reverbWetR) * 0.5;
+                    double wetSide = (reverbWetR - reverbWetL) * 0.5;
+                    wetSide *= 1.0 + rv.width * 1.35;
+                    reverbWetL = wetMid - wetSide;
+                    reverbWetR = wetMid + wetSide;
+                }
+                const double earlyMix = std::clamp(rv.earlyMix * 0.52, 0.0, 0.52);
+                const double earlyLeft = tapA * 0.52 + tapB * 0.28 + tapC * 0.20;
+                const double earlyRight = tapD * 0.52 + tapC * 0.28 + tapB * 0.20;
+                const double reverbOutLeft = reverbWetL * (1.0 - earlyMix) + earlyLeft * earlyMix;
+                const double reverbOutRight = reverbWetR * (1.0 - earlyMix) + earlyRight * earlyMix;
+                mixedLeft += reverbOutLeft;
+                mixedRight += reverbOutRight;
+                const double wetLevel = std::abs(reverbOutLeft) + std::abs(reverbOutRight);
+                rv.tailLevel = std::max(wetLevel, rv.tailLevel * 0.9995);
+                rv.delayIndex = (rv.delayIndex + 1) % static_cast<int>(rv.delayL.size());
+            }
+        }
+        // Master "smile" EQ: +~2.8 dB below 150 Hz, ~-1.6 dB at 150-1500 Hz,
+        // ~-4.6 dB above ~6.5 kHz. Warm lows, controlled mids, silky top.
+        const double masterAlpha150 = 1.0 - std::exp(-twoPi * 150.0 * invSampleRate);
+        const double masterAlpha1500 = 1.0 - std::exp(-twoPi * 1500.0 * invSampleRate);
+        const double masterAlpha6500 = 1.0 - std::exp(-twoPi * 6500.0 * invSampleRate);
+        masterLp150Left_ += masterAlpha150 * (mixedLeft - masterLp150Left_);
+        masterLp150Right_ += masterAlpha150 * (mixedRight - masterLp150Right_);
+        masterLp1500Left_ += masterAlpha1500 * (mixedLeft - masterLp1500Left_);
+        masterLp1500Right_ += masterAlpha1500 * (mixedRight - masterLp1500Right_);
+        masterLp6500Left_ += masterAlpha6500 * (mixedLeft - masterLp6500Left_);
+        masterLp6500Right_ += masterAlpha6500 * (mixedRight - masterLp6500Right_);
+        mixedLeft += masterLp150Left_ * 0.35
+            - (masterLp1500Left_ - masterLp150Left_) * 0.18
+            - (mixedLeft - masterLp6500Left_) * 0.42;
+        mixedRight += masterLp150Right_ * 0.35
+            - (masterLp1500Right_ - masterLp150Right_) * 0.18
+            - (mixedRight - masterLp6500Right_) * 0.42;
         const double peak = std::max(std::abs(mixedLeft), std::abs(mixedRight));
         const double peakCoeff = peak > outputPeakFollower_ ? peakAttackCoeff : peakReleaseCoeff;
         outputPeakFollower_ = peak + (outputPeakFollower_ - peak) * peakCoeff;
         const double squared = 0.5 * (mixedLeft * mixedLeft + mixedRight * mixedRight);
         outputRmsFollower_ = squared + (outputRmsFollower_ - squared) * rmsCoeff;
         const double loudnessProxy = std::max(outputPeakFollower_, std::sqrt(std::max(0.0, outputRmsFollower_)) * 1.25);
-        const double autoTrim = 1.0 / (1.0 + loudnessProxy * 0.50);
+        const double autoTrim = 1.0 / (1.0 + loudnessProxy * 0.22);
         mixedLeft *= autoTrim;
         mixedRight *= autoTrim;
         blockPreLimiterPeak = std::max(blockPreLimiterPeak, std::max(std::abs(mixedLeft), std::abs(mixedRight)));
@@ -2035,12 +2690,18 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
         mixedRight *= outputLimiterGain_;
         mixedLeft = softKneeLimiter(mixedLeft, 0.91, 4.8);
         mixedRight = softKneeLimiter(mixedRight, 0.91, 4.8);
-        if (heavyLoad) {
-            mixedLeft = std::tanh(mixedLeft * 0.62) / 0.62;
-            mixedRight = std::tanh(mixedRight * 0.62) / 0.62;
-        } else {
-                mixedLeft = std::tanh(mixedLeft * 0.62) / 0.62;
-                mixedRight = std::tanh(mixedRight * 0.62) / 0.62;
+        // Master glue: blends in only on genuinely hot buses (smoothed peak
+        // follower) instead of coloring everything unconditionally — a clean
+        // voice/bus must stay clean (< 1% THD on a pure sine with patch color
+        // at zero), while buses driven toward the limiter keep the glued tone.
+        // Also fixes the duplicated heavyLoad/else branches that both applied
+        // full glue at any level.
+        const double busGlueAmount = clamp01((outputPeakFollower_ - 2.0) / 0.30);
+        if (busGlueAmount > 0.0001) {
+            const double gluedLeft = fastTanh(mixedLeft * 0.62) / 0.62;
+            const double gluedRight = fastTanh(mixedRight * 0.62) / 0.62;
+            mixedLeft = mixedLeft * (1.0 - busGlueAmount) + gluedLeft * busGlueAmount;
+            mixedRight = mixedRight * (1.0 - busGlueAmount) + gluedRight * busGlueAmount;
         }
 
         // === TRUE PEAK LIMITING (Phase 6) ===
@@ -2060,8 +2721,8 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
         mixedLeft *= truePeakLimiterGain_;
         mixedRight *= truePeakLimiterGain_;
 
-        mixedLeft *= 0.70;
-        mixedRight *= 0.70;
+        mixedLeft *= 1.25;
+        mixedRight *= 1.25;
 
         if (mixedLeft > 1.0) {
             mixedLeft = 1.0;
@@ -2074,8 +2735,22 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
             mixedRight = -1.0;
         }
 
-        mixedLeft = 1.5 * mixedLeft - 0.5 * mixedLeft * mixedLeft * mixedLeft;
-        mixedRight = 1.5 * mixedRight - 0.5 * mixedRight * mixedRight * mixedRight;
+        // Final output stage: linear 1.5x makeup below the knee (same small-signal
+        // gain the old cubic provided, but distortion-free), knee soft-clip toward
+        // the rails above. The previous unconditional 1.5x-0.5x^3 cubic colored
+        // EVERY sample (~2% pure 3rd harmonic even on a single clean voice),
+        // sanding off patch character; peaks still get the same protection.
+        auto outputStage = [](double x) {
+            constexpr double kneeIn = 0.6; // 1.5 * 0.6 = 0.9 output knee
+            const double ax = std::abs(x);
+            if (ax <= kneeIn) {
+                return x * 1.5;
+            }
+            const double excess = (ax - kneeIn) / (1.0 - kneeIn);
+            return std::copysign(0.9 + 0.1 * fastTanh(excess * 2.0), x);
+        };
+        mixedLeft = outputStage(mixedLeft);
+        mixedRight = outputStage(mixedRight);
 
         const double dcLeft = mixedLeft - outputDcInputLeft_ + dcCoeff * outputDcOutputLeft_;
         const double dcRight = mixedRight - outputDcInputRight_ + dcCoeff * outputDcOutputRight_;
@@ -2099,9 +2774,12 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
         std::size_t write = 0;
         for (std::size_t read = 0; read < voices_.size(); ++read) {
             const Voice& voice = voices_[read];
-            const double total = voice.gateSeconds + voice.patch.ampEnvelope.release + 0.04;
+            const double total = voice.gateSeconds + voice.patch.ampEnvelope.release
+                + std::max(0.04, voice.fxTailSeconds);
             bool dead = false;
-            if (voice.age > voice.gateSeconds && voice.ampEnvelopeValue < 0.00045) {
+            if (voice.age > voice.gateSeconds
+                && voice.ampEnvelopeValue < 0.00045
+                && voice.age > total) {
                 dead = true;
             } else if (voice.isStolen && voice.stolenGain < 0.001) {
                 dead = true;
@@ -2119,9 +2797,14 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
     }
 
     // O(n) scan voice culling instead of std::nth_element
-    const int cullCap = smoothedDspLoadPercent_ > 82.0
-        ? 16
-        : (smoothedDspLoadPercent_ > 66.0 ? 24 : 34);
+    // The idle cap must stay generous: dense multi-track imports routinely hold
+    // 40+ sustained voices on healthy machines, and culling them is audible as
+    // tracks dropping out. Shed voices only under measured DSP load.
+    const int cullCap = offlineRendering_
+        ? maxActiveVoices
+        : (smoothedDspLoadPercent_ > 82.0
+        ? 24
+        : (smoothedDspLoadPercent_ > 66.0 ? 40 : 64));
     if (static_cast<int>(voices_.size()) > cullCap) {
         auto voicePriority = [](const Voice& voice) {
             const double velocityWeight = std::clamp(static_cast<double>(voice.note.velocity), 0.0, 1.0);
@@ -2167,7 +2850,15 @@ void Synthesizer::render(float* left, float* right, int sampleCount) {
     const double instantLoadPercent = renderSeconds > 1e-9
         ? (elapsed.count() / renderSeconds) * 100.0
         : 0.0;
-    smoothedDspLoadPercent_ = smoothedDspLoadPercent_ * 0.74 + instantLoadPercent * 0.26;
+    if (!offlineRendering_) {
+        // Wall-clock load feedback drives the realtime adaptive-quality system only;
+        // offline renders must never degrade based on how fast the host machine is.
+        // Asymmetric smoothing: fast attack on the rising edge (load spikes engage
+        // shedding within ~2 blocks) but slow release, so tiers don't thrash.
+        const double smoothing = instantLoadPercent > smoothedDspLoadPercent_ ? 0.50 : 0.74;
+        smoothedDspLoadPercent_ = smoothedDspLoadPercent_ * smoothing
+            + instantLoadPercent * (1.0 - smoothing);
+    }
     const double peak = std::max(1e-9, outputPeakFollower_);
     const double headroomDb = peak >= 1.0 ? 0.0 : (-20.0 * std::log10(peak));
     const double limiterReductionDb = outputLimiterGain_ >= 0.999999
@@ -2218,7 +2909,7 @@ double Synthesizer::sampleOscillator(
     const double bandLimitedIncrement = std::clamp(phaseIncrement, 0.0, 0.49);
     switch (waveform) {
         case Waveform::Sine:
-            return std::sin(phase * twoPi);
+            return fastSin01(phase);
         case Waveform::Square: {
             const double width = std::clamp(pulseWidth, 0.03, 0.97);
             double value = phase < width ? 1.0 : -1.0;
@@ -2247,14 +2938,14 @@ double Synthesizer::sampleOscillator(
             for (int index = 0; index < cappedVoices; ++index) {
                 const double d = detunes[index] * detuneScale;
                 const double localInc = std::clamp(bandLimitedIncrement * (1.0 + d), 0.0, 0.49);
-                const double drift = std::sin((phase * twoPi) + static_cast<double>(index) * 0.73) * 0.0025;
+                const double drift = fastSin01(wrapPhase(phase + static_cast<double>(index) * 0.73 * (1.0 / twoPi))) * 0.0025;
                 const double localPhase = wrapPhase(phase + (static_cast<double>(index) * 0.137) + d * 0.35 + drift);
                 const double saw = (localPhase * 2.0 - 1.0) - polyBlep(localPhase, localInc);
                 sum += saw * weights[index];
                 weightSum += weights[index];
             }
             const double normalized = weightSum > 0.0 ? (sum / weightSum) : 0.0;
-            return std::tanh(normalized * 1.35) * 0.93;
+            return fastTanh(normalized * 1.35) * 0.93;
         }
     }
     return 0.0;

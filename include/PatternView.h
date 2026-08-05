@@ -15,6 +15,7 @@ struct PatternGridCell {
     int track = 0;
     std::string trackName;
     bool hasNote = false;
+    bool noteOff = false;
     std::string noteName;
     int midiNote = -1;
     float velocity = 0.0f;

@@ -51,6 +51,12 @@ public:
     void undo();
     void redo();
     void enterNote(const Note& note, float velocity = 1.0f);
+    void enterNote(const Note& note, int instrument, float velocity = 1.0f);
+    void enterNoteOff();
+    // Legato input: when armed, entered notes sustain (gate) until the next
+    // note or note-off step on the same track (edit-time gate fill only).
+    void setLegatoInput(bool enabled);
+    bool legatoInputEnabled() const { return legatoInput_; }
     void clearStep();
     void setInstrument(int instrument);
     void setGate(double gateRows);
@@ -135,12 +141,14 @@ private:
     Pattern& activePattern();
     const Pattern& activePattern() const;
     PatternStep& activeStep();
+    void applyLegatoGate(PatternStep& step);
     void clampCursor();
     void clampSelection();
 
     Song& song_;
     EditorCursor cursor_;
     EditorSelection selection_;
+    bool legatoInput_ = false;
     std::vector<std::vector<PatternStep>> clipboard_;
     std::vector<Snapshot> undoStack_;
     std::vector<Snapshot> redoStack_;

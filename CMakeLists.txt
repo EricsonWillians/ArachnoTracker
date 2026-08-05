@@ -1,10 +1,23 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(ArachnoTracker VERSION 1.0 LANGUAGES CXX)
+project(ArachnoTracker VERSION 1.1.0 LANGUAGES CXX)
+
+# The synth/DSP engine is computationally heavy; an unoptimized build cannot
+# sustain realtime playback. Default to an optimized build unless the developer
+# explicitly picks another configuration.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Native codegen for the hot DSP paths (safe: no fast-math, IEEE semantics and
+# deterministic renders are preserved). Disable with -DARACHNO_NATIVE_OPT=OFF
+# when producing portable binaries.
+option(ARACHNO_NATIVE_OPT "Enable -march=native for DSP-heavy targets" ON)
 
 find_package(Threads REQUIRED)
 find_package(X11 REQUIRED)
@@ -36,6 +49,7 @@ add_library(arachno_core
     src/ui/GUI.cpp
     src/ui/gui/GuiInput.cpp
     src/ui/gui/GuiAudioRuntime.cpp
+    src/ui/gui/GuiAudioProducerOps.cpp
     src/ui/gui/GuiInstrumentBrowserOps.cpp
     src/ui/gui/GuiGridOps.cpp
     src/ui/gui/GuiGridWindowOps.cpp
@@ -136,6 +150,7 @@ add_library(arachno_core
     src/utils/ExportWorkflow.cpp
     src/utils/FileIO.cpp
     src/utils/FileCompatibility.cpp
+    src/utils/GmPresetBank.cpp
     src/utils/MidiImporter.cpp
     src/utils/MidiExporter.cpp
     src/utils/PatchIO.cpp
@@ -173,6 +188,7 @@ endif()
 
 target_compile_options(arachno_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    $<$<AND:$<CXX_COMPILER_ID:GNU,Clang>,$<BOOL:${ARACHNO_NATIVE_OPT}>>:-march=native>
 )
 
 add_executable(ArachnoTracker
@@ -186,6 +202,11 @@ if(BUILD_TESTING)
     add_executable(arachno_smoke_tests
         tests/test_audio.cpp
         tests/test_tracker.cpp
+    )
+    # The smoke tests use raw assert() for verification (and a few side effects
+    # inside assert expressions); never let NDEBUG compile them out.
+    target_compile_options(arachno_smoke_tests PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-UNDEBUG>
     )
     target_link_libraries(arachno_smoke_tests PRIVATE arachno_core)
     add_test(NAME arachno_smoke_tests COMMAND arachno_smoke_tests)

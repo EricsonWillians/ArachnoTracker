@@ -31,6 +31,7 @@ struct GuiMainSidebarClickContext {
     UiRect& patternRowsPlus;
     UiRect& patternRowsValue;
     UiRect& stepAdvanceButton;
+    UiRect& legatoButton;
     UiRect& followPlaybackButton;
 
     bool& draggingPatternRows;
@@ -49,6 +50,7 @@ struct GuiMainSidebarClickContext {
     std::function<void(const std::string&)> handleMidiImportRole;
     std::function<void(const std::string&)> handleInstrumentControlRole;
     std::function<void(int)> selectInstrument;
+    std::function<void()> toggleLegatoInput;
 };
 
 GuiMainSidebarClickResult handleMainSidebarLeftClick(const GuiMainSidebarClickContext& context);

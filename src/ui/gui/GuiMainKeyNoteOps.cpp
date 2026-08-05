@@ -14,7 +14,7 @@ GuiMainKeyNoteResult handleMainKeyNoteOps(const GuiMainKeyNoteContext& context) 
     if (context.synthWindowVisible && !context.ctrlDown && !context.altDown) {
         auto setSynthOctaveFromShortcut = [&](int octave) {
             context.setArmedOctave(octave);
-            context.synthPreviewMidi = std::clamp((context.armedOctave * 12) + (context.synthPreviewMidi % 12), 0, 127);
+            context.synthPreviewMidi = std::clamp(((context.armedOctave + 1) * 12) + (context.synthPreviewMidi % 12), 0, 127);
             context.paintNoteMidi = context.synthPreviewMidi;
             context.ensureSynthKeyboardShowsMidi(context.synthPreviewMidi);
             result.synthWindowNeedsRedraw = true;
@@ -72,6 +72,27 @@ GuiMainKeyNoteResult handleMainKeyNoteOps(const GuiMainKeyNoteContext& context) 
             result.needsRedraw = true;
             return result;
         }
+    }
+
+    if (context.altDown && !context.ctrlDown && !context.shiftDown) {
+        const int digit = context.resolvedDigit();
+        if (digit >= 0) {
+            const int count = context.instrumentCount();
+            if (count > 0) {
+                const int mapped = std::clamp(digit, 0, count - 1);
+                context.selectInstrument(mapped);
+                result.consumed = true;
+                result.needsRedraw = true;
+                return result;
+            }
+        }
+    }
+
+    if (!context.synthWindowVisible && !context.ctrlDown && !context.altDown && context.key == XK_Caps_Lock) {
+        (void)context.applyTrackerNoteOffAtCursor(context.stepAdvance);
+        result.consumed = true;
+        result.needsRedraw = true;
+        return result;
     }
 
     if (!context.ctrlDown && !context.altDown) {

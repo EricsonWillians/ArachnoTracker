@@ -21,6 +21,8 @@ struct ScheduledNote {
     SynthPatch patch;
     double pan = 0.0;
     double gateSeconds = 0.2;
+    // Note-off event: releases the last note started on this track.
+    bool noteOff = false;
 };
 
 struct MixBusState {
@@ -201,6 +203,16 @@ RenderedAudio AudioEngine::renderSong(const Song& song, const RenderOptions& opt
 
                 const PatternStep& step = pattern.step(row, track);
                 if (!step.note.has_value()) {
+                    if (step.noteOff) {
+                        const int frame = std::max(0, static_cast<int>(std::llround(
+                            (static_cast<double>(globalRow + row) + step.microOffsetRows)
+                                * secondsPerRow * sampleRate)));
+                        ScheduledNote event;
+                        event.frame = frame;
+                        event.track = track;
+                        event.noteOff = true;
+                        events.push_back(event);
+                    }
                     continue;
                 }
 
@@ -272,14 +284,22 @@ RenderedAudio AudioEngine::renderSong(const Song& song, const RenderOptions& opt
     const int busCount = parallelBusRender ? desiredBuses : 1;
 
     std::vector<std::vector<ScheduledNote>> busEvents(static_cast<std::size_t>(busCount));
+    int maxEventTrack = -1;
     for (const ScheduledNote& event : events) {
         const int bus = busCount <= 1 ? 0 : std::clamp(event.track, 0, std::numeric_limits<int>::max()) % busCount;
         busEvents[static_cast<std::size_t>(bus)].push_back(event);
+        maxEventTrack = std::max(maxEventTrack, event.track);
     }
+    // Last started note per track, maintained independently per bus (each track maps to one bus).
+    std::vector<std::vector<int>> busLastNoteForTrack(
+        static_cast<std::size_t>(busCount),
+        std::vector<int>(static_cast<std::size_t>(maxEventTrack + 1), -1));
     std::vector<Synthesizer> busSynths;
     busSynths.reserve(static_cast<std::size_t>(busCount));
     for (int bus = 0; bus < busCount; ++bus) {
         busSynths.emplace_back(static_cast<double>(sampleRate));
+        // Offline mixdown: always render at full quality (no load-adaptive degradation).
+        busSynths.back().setOfflineRendering(true);
     }
     std::vector<std::size_t> busNextEvent(static_cast<std::size_t>(busCount), 0);
 
@@ -307,16 +327,30 @@ RenderedAudio AudioEngine::renderSong(const Song& song, const RenderOptions& opt
             Synthesizer& synth = busSynths[static_cast<std::size_t>(bus)];
             std::size_t& nextEvent = busNextEvent[static_cast<std::size_t>(bus)];
             const std::vector<ScheduledNote>& eventsForBus = busEvents[static_cast<std::size_t>(bus)];
+            std::vector<int>& lastNoteForTrack = busLastNoteForTrack[static_cast<std::size_t>(bus)];
 
             int cursor = 0;
             while (cursor < framesThisBlock) {
                 const int absoluteFrame = frame + cursor;
                 while (nextEvent < eventsForBus.size() && eventsForBus[nextEvent].frame <= absoluteFrame) {
-                    synth.noteOn(
-                        eventsForBus[nextEvent].note,
-                        eventsForBus[nextEvent].patch,
-                        eventsForBus[nextEvent].pan,
-                        eventsForBus[nextEvent].gateSeconds);
+                    const ScheduledNote& event = eventsForBus[nextEvent];
+                    if (event.noteOff) {
+                        int& lastNote = lastNoteForTrack[static_cast<std::size_t>(event.track)];
+                        if (lastNote >= 0) {
+                            synth.noteOff(lastNote, event.track);
+                            lastNote = -1;
+                        }
+                    } else {
+                        synth.noteOn(
+                            event.note,
+                            event.patch,
+                            event.pan,
+                            event.gateSeconds,
+                            -1,
+                            false,
+                            event.track);
+                        lastNoteForTrack[static_cast<std::size_t>(event.track)] = event.note.midi;
+                    }
                     ++nextEvent;
                 }
 

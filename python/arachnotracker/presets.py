@@ -71,7 +71,8 @@ def apply_competition_quality(
         patch.transient_decay = min(max(patch.transient_decay, 0.010), 0.020)
         patch.transient_tone = min(max(patch.transient_tone, 0.40), 0.72)
         if "snare" in patch.name.lower():
-            patch.reverb_decay = min(max(patch.reverb_decay, 0.80), 0.90)
+            # reverb_decay is not part of the serializable SynthPatch model; keep the
+            # tuning intent without breaking patch construction.
             patch.amp_envelope.release = min(max(patch.amp_envelope.release, 0.05), 0.16)
         patch.gain = min(max(patch.gain, 0.28), 0.72)
     else:
@@ -153,7 +154,6 @@ def gated_snare() -> SynthPatch:
         high_pass=0.2,
         ring_mod=0.18,
         drive=0.08,
-        reverb_decay=0.75,
         bit_crush=0.03,
         gain=0.52,
         amp_envelope=Envelope(attack=0.001, decay=0.09, sustain=0.0, release=0.16),
@@ -235,4 +235,75 @@ def soft_wide() -> SynthPatch:
         tremolo_depth=0.12,
         gain=0.42,
         amp_envelope=Envelope(attack=0.08, decay=0.3, sustain=0.78, release=0.45),
+    ))
+
+
+def classic_strings() -> SynthPatch:
+    """Lush 80s ensemble strings; full ADSR sustains for as long as a key is held."""
+    return apply_competition_quality(SynthPatch(
+        name="Vintage Strings",
+        oscillator_a=Waveform.SAW,
+        oscillator_b=Waveform.TRIANGLE,
+        oscillator_mix=0.5,
+        unison_voices=5,
+        unison_detune_cents=8.0,
+        stereo_spread=0.55,
+        chorus_mix=0.32,
+        chorus_rate=0.18,
+        chorus_depth=0.42,
+        cutoff=0.48,
+        resonance=0.08,
+        filter_envelope_amount=0.12,
+        vibrato_cents=4.0,
+        gain=0.38,
+        amp_envelope=Envelope(attack=0.09, decay=0.25, sustain=0.78, release=0.55),
+        filter_envelope=Envelope(attack=0.12, decay=0.3, sustain=0.5, release=0.4),
+    ))
+
+
+def synth_strings_85() -> SynthPatch:
+    """Brighter mid-80s synth strings with a faster response; sustains while held."""
+    return apply_competition_quality(SynthPatch(
+        name="Synth Strings 85",
+        oscillator_a=Waveform.SAW,
+        oscillator_b=Waveform.SAW,
+        oscillator_mix=0.5,
+        detune_cents=9.0,
+        unison_voices=4,
+        unison_detune_cents=9.0,
+        stereo_spread=0.58,
+        chorus_mix=0.3,
+        chorus_rate=0.25,
+        chorus_depth=0.4,
+        cutoff=0.52,
+        resonance=0.12,
+        filter_envelope_amount=0.18,
+        lfo_rate=2.6,
+        vibrato_cents=5.0,
+        gain=0.4,
+        amp_envelope=Envelope(attack=0.035, decay=0.22, sustain=0.8, release=0.45),
+        filter_envelope=Envelope(attack=0.05, decay=0.3, sustain=0.55, release=0.35),
+    ))
+
+
+def analog_string_machine() -> SynthPatch:
+    """Solina-style string machine: slow swell, deep ensemble chorus, long release."""
+    return apply_competition_quality(SynthPatch(
+        name="Analog String Machine",
+        oscillator_a=Waveform.SAW,
+        oscillator_b=Waveform.SQUARE,
+        oscillator_mix=0.55,
+        unison_voices=6,
+        unison_detune_cents=12.0,
+        stereo_spread=0.68,
+        chorus_mix=0.5,
+        chorus_rate=0.14,
+        chorus_depth=0.6,
+        cutoff=0.44,
+        resonance=0.06,
+        filter_envelope_amount=0.1,
+        vibrato_cents=2.5,
+        gain=0.34,
+        amp_envelope=Envelope(attack=0.3, decay=0.4, sustain=0.9, release=0.8),
+        filter_envelope=Envelope(attack=0.35, decay=0.5, sustain=0.6, release=0.6),
     ))

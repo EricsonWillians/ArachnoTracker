@@ -24,7 +24,8 @@ AppActionResult auditionArmedInstrumentNote(
     int midiNote,
     float velocity,
     double gateSeconds,
-    const std::string& actionId);
+    const std::string& actionId,
+    bool sustainUntilNoteOff = false);
 
 AppActionResult auditionCurrentSynthPatchNote(
     ApplicationSession& session,
@@ -32,7 +33,8 @@ AppActionResult auditionCurrentSynthPatchNote(
     int midiNote,
     float velocity,
     double gateSeconds,
-    const std::string& actionId);
+    const std::string& actionId,
+    bool sustainUntilNoteOff = false);
 
 double defaultSynthPreviewGateSeconds(
     const ApplicationSession& session,

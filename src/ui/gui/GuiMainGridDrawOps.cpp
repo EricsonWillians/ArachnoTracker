@@ -1,6 +1,7 @@
 #include "ui/gui/GuiMainGridDrawOps.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -107,8 +108,50 @@ void drawMainGridSection(const GuiMainGridDrawContext& context) {
         context.drawRect(x, context.gridTop + 1, trackWidth, context.gridHeight - 2, context.colorGridLine);
     }
 
+    // Sustain bars: a slim marker in the note column for every row a note rings
+    // through (gate > 1 row), stopping at the next note or note-off (===).
+    for (int rowOffset = 0; rowOffset < visibleRows; ++rowOffset) {
+        for (int col = 0; col < visibleTrackCols; ++col) {
+            const int track = context.gridTrackStartRef + col;
+            if (track >= totalTrackCols) {
+                break;
+            }
+            const int cellIndex = (rowOffset * totalTrackCols) + track;
+            if (cellIndex < 0 || cellIndex >= static_cast<int>(grid.cells.size())) {
+                continue;
+            }
+            const PatternGridCell& cell = grid.cells[static_cast<std::size_t>(cellIndex)];
+            if (!cell.hasNote || cell.gateRows <= 1.0) {
+                continue;
+            }
+            const int gateSpan = std::max(1, static_cast<int>(std::ceil(cell.gateRows)) - 1);
+            int rowsToCover = std::min(gateSpan, visibleRows - 1 - rowOffset);
+            for (int look = rowOffset + 1; look <= rowOffset + rowsToCover; ++look) {
+                const int lookIndex = (look * totalTrackCols) + track;
+                if (lookIndex < 0 || lookIndex >= static_cast<int>(grid.cells.size())) {
+                    break;
+                }
+                const PatternGridCell& below = grid.cells[static_cast<std::size_t>(lookIndex)];
+                if (below.hasNote || below.noteOff) {
+                    rowsToCover = look - rowOffset - 1;
+                    break;
+                }
+            }
+            if (rowsToCover <= 0) {
+                continue;
+            }
+            const int x = context.gridLeft + rowNumberWidth + 4 + (col * trackWidth);
+            const int yStart = context.gridTop + 26 + (rowOffset * rowHeight) + rowHeight - 4;
+            const int yEnd = context.gridTop + 26 + ((rowOffset + rowsToCover) * rowHeight) + rowHeight - 4;
+            context.drawFilledRect(x + 5, yStart, 2, yEnd - yStart, context.colorMutedText);
+        }
+    }
+
     auto formatCell = [](const PatternGridCell& cell) {
         if (!cell.hasNote) {
+            if (cell.noteOff) {
+                return std::string("=== .. ..");
+            }
             return std::string("... .. ..");
         }
         char buffer[32];
@@ -117,8 +160,26 @@ void drawMainGridSection(const GuiMainGridDrawContext& context) {
         return std::string(buffer);
     };
 
-    const bool playingHere = context.playback.state == TransportState::Playing
+    const bool playbackActive = context.playback.state == TransportState::Playing
+        || context.playback.state == TransportState::Paused;
+    const bool playingHere = playbackActive
+        && context.playback.position.validPattern
         && context.playback.position.pattern == context.snapshot.editor.status.activePattern;
+    // Fractional playhead position within the current row (for a smooth scan line).
+    double playheadRowFraction = 0.0;
+    if (playingHere) {
+        int baseRows = 0;
+        const std::vector<OrderSlotSummary>& order = context.snapshot.editor.order;
+        const int orderIndex = context.playback.position.orderIndex;
+        for (int slot = 0; slot < orderIndex && slot < static_cast<int>(order.size()); ++slot) {
+            baseRows += order[static_cast<std::size_t>(slot)].rowCount;
+        }
+        playheadRowFraction = std::clamp(
+            context.playback.position.absoluteRow
+                - static_cast<double>(baseRows + context.playback.position.patternRow),
+            0.0,
+            1.0);
+    }
     for (int rowOffset = 0; rowOffset < visibleRows; ++rowOffset) {
         const int yTop = context.gridTop + 26 + (rowOffset * rowHeight);
         const int textY = yTop + 13;
@@ -131,6 +192,14 @@ void drawMainGridSection(const GuiMainGridDrawContext& context) {
                 context.gridWidth - 2,
                 rowHeight - 2,
                 context.colorPlayhead);
+            // Scan line at the exact fractional playhead position inside the row.
+            const int scanY = yTop + 1 + static_cast<int>(playheadRowFraction * (rowHeight - 3));
+            context.drawFilledRect(
+                context.gridLeft + 1,
+                scanY,
+                context.gridWidth - 2,
+                2,
+                context.colorPlayheadText);
             rowOnPlayhead = true;
         }
         char rowBuf[16];

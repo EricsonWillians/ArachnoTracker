@@ -26,6 +26,7 @@ struct EditorStatus {
     int selectionTracks = 1;
     bool canUndo = false;
     bool canRedo = false;
+    bool legatoInput = false;
 };
 
 struct PatternSummary {

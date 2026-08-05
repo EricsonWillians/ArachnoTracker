@@ -124,6 +124,7 @@ struct GuiWindowMainInteractionFactoryInput {
     UiRect& patternRowsPlus;
     UiRect& patternRowsValue;
     UiRect& stepAdvanceButton;
+    UiRect& legatoButton;
     UiRect& followPlaybackButton;
 
     GuiAudioRuntime& audioRuntime;
